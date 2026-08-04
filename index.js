@@ -20,7 +20,7 @@ const TZ_OFFSET_MS = 8 * 60 * 60 * 1000; // 台灣 UTC+8：Worker 跑在 UTC，�
 const DAY_MS = 86400000;
 const TREND_DAYS = 30;
 const TREND_MONTHS = 12;
-const HEAT_WEEKS = 16;
+const HEAT_WEEKS = 53; // 送一整年，前端再照卡片寬度決定實際畫幾週
 
 function taipeiNow() {
   return new Date(Date.now() + TZ_OFFSET_MS);
@@ -367,6 +367,7 @@ const INDEX_HTML = String.raw`<!DOCTYPE html>
     --heat-empty:#EEF4F7;
     --good:#1E6E43; --danger:#A6402A; --amber:#E8963C;
     --shadow:0 1px 3px rgba(46,134,171,.07);
+    --ctl-h:40px;   /* 表單欄位統一高度，以下拉選單的原生高度為準 */
     --tip-bg:#16323D; --tip-ink:#FFFFFF;
   }
   @media (prefers-color-scheme:dark){
@@ -421,8 +422,10 @@ const INDEX_HTML = String.raw`<!DOCTYPE html>
     box-shadow:0 0 0 3px rgba(46,134,171,.16)}
   select:disabled{opacity:.5;cursor:not-allowed}
   textarea{resize:vertical;min-height:44px}
-  #amount{font-size:19px;font-weight:600;font-variant-numeric:tabular-nums}
-  input[type="date"],input[type="number"]{min-width:0}
+  /* 日期、數字、文字、下拉的原生高度各不相同（40.5／44／38／40），
+     一律鎖成同一個高度，欄位才會跟費用類別、品名對齊 */
+  .grid input,.grid select{height:var(--ctl-h);min-width:0}
+  #amount,#e_amount{font-weight:600;font-variant-numeric:tabular-nums}
   .btn-row{display:flex;gap:10px;margin-top:18px}
   button{font-family:inherit;font-size:15px;font-weight:600;cursor:pointer;border:none;border-radius:10px;
     padding:13px 18px;transition:opacity .15s,transform .1s,background .15s,color .15s}
@@ -477,10 +480,10 @@ const INDEX_HTML = String.raw`<!DOCTYPE html>
   .pane.wide{grid-column:1/-1}
 
   /* ---- 熱力圖 ---- */
-  .heat-scroll{overflow-x:auto;padding-bottom:4px}
-  .heat-inner{min-width:338px;max-width:448px}
+  /* 週數由 JS 依卡片寬度算出，格子用 1fr 撐滿，所以熱力圖永遠剛好等於卡片寬度 */
+  .heat-inner{width:100%}
   .heat-body{display:flex;gap:5px;align-items:stretch}
-  .heat-wd{display:grid;grid-template-rows:repeat(7,1fr);gap:3px;padding-top:18px;flex:none}
+  .heat-wd{display:grid;grid-template-rows:repeat(7,1fr);gap:3px;padding-top:18px;flex:none;width:14px}
   .heat-wd span{font-size:9.5px;color:var(--muted);display:flex;align-items:center;line-height:1}
   .heat-cols{flex:1;min-width:0}
   .heat-months{display:grid;grid-auto-flow:column;gap:3px;height:13px;margin-bottom:5px}
@@ -653,7 +656,7 @@ const INDEX_HTML = String.raw`<!DOCTYPE html>
     <div class="card-head">
       <div>
         <h2>每日支出熱力圖</h2>
-        <div class="sub">最近 16 週，顏色越深當天花越多</div>
+        <div class="sub" id="heatSub">顏色越深當天花越多</div>
       </div>
     </div>
     <div id="heatBox"><div class="loading">載入中…</div></div>
@@ -860,9 +863,25 @@ function renderBreakdown(){
 }
 
 /* ---------- 熱力圖 ---------- */
+var HEAT_WD_W = 14, HEAT_GAP = 3, HEAT_CELL = 15;   // 標籤欄寬、格子間距、理想格子邊長
+
+/** 卡片有多寬就畫多少週，格子維持在順眼的大小，不留空白也不用左右捲 */
+function heatWeeksFor(width){
+  var usable = width - HEAT_WD_W - 5;                       // 5 是 heat-body 的 gap
+  var n = Math.round((usable + HEAT_GAP) / (HEAT_CELL + HEAT_GAP));
+  return Math.max(8, Math.min(53, n));
+}
+
 function renderHeat(){
   var box = el('heatBox'), days = DATA.heat || [];
   if(!days.length){ box.innerHTML = '<div class="empty">還沒有資料</div>'; return; }
+
+  // 只留最後 N 週，且切在星期日，列才不會錯位
+  var want = heatWeeksFor(box.clientWidth || 906);
+  var lead0 = new Date(days[0].key + 'T00:00:00Z').getUTCDay();
+  var have = Math.ceil((lead0 + days.length) / 7);
+  if(want < have) days = days.slice(Math.max(0, (have - want) * 7 - lead0));
+
   var vals = days.filter(function(d){ return d.total > 0; })
     .map(function(d){ return d.total; }).sort(function(a,b){ return a-b; });
   function q(p){ return vals.length ? vals[Math.min(vals.length-1, Math.floor(vals.length*p))] : 0; }
@@ -892,14 +911,17 @@ function renderHeat(){
   var wd = ['日','','','三','','','六']
     .map(function(w){ return '<span>' + w + '</span>'; }).join('');
 
-  box.innerHTML = '<div class="heat-scroll"><div class="heat-inner">'
+  box.innerHTML = '<div class="heat-inner">'
     + '<div class="heat-body"><div class="heat-wd">' + wd + '</div><div class="heat-cols">'
     + '<div class="heat-months" style="grid-template-columns:repeat(' + weeks + ',1fr)">' + months + '</div>'
     + '<div class="heat-grid" style="grid-template-columns:repeat(' + weeks + ',1fr)">' + cells + '</div>'
     + '</div></div>'
     + '<div class="heat-legend">少<i class="hc"></i><i class="hc l0"></i><i class="hc l1"></i>'
     + '<i class="hc l2"></i><i class="hc l3"></i>多</div>'
-    + '</div></div>';
+    + '</div>';
+
+  var sub = el('heatSub');
+  if(sub) sub.textContent = '最近 ' + weeks + ' 週，顏色越深當天花越多';
 }
 
 /* ---------- 紀錄明細（可編輯／刪除） ---------- */
@@ -1136,6 +1158,17 @@ el('saveBtn').addEventListener('click', function(){
     })
     .catch(function(err){ showMsg('存不進去：' + err.message, 'err'); })
     .finally(function(){ btn.disabled=false; btn.textContent='儲存這筆'; });
+});
+
+/* 視窗寬度變了就重算週數，熱力圖才會一直貼齊卡片 */
+var heatTimer = null, heatW = 0;
+window.addEventListener('resize', function(){
+  if(!DATA) return;
+  var w = el('heatBox').clientWidth;
+  if(heatWeeksFor(w) === heatWeeksFor(heatW)) return;
+  heatW = w;
+  clearTimeout(heatTimer);
+  heatTimer = setTimeout(renderHeat, 120);
 });
 
 fetch('/api/bootstrap').then(function(r){ return r.json(); })
