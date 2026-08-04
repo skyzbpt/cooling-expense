@@ -413,6 +413,11 @@ const INDEX_HTML = String.raw`<!DOCTYPE html>
 
   /* ---- 表單 ---- */
   .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px 14px}
+  /* Grid 項目預設 min-width:auto，會依內容的「內在最小寬度」撐開所在欄軌。
+     Safari 的原生日期元件內在寬度算法跟其他欄位不同，沒有這行會把日期所在的
+     那一欄（跟費用類別、支付方式同欄）撐得比另一欄（品名、經手人）寬，
+     兩欄看起來就不一樣寬。強制歸零讓欄軌完全照 1fr 平分。 */
+  .grid>div{min-width:0}
   .full{grid-column:1/-1}
   label{display:block;font-size:12px;color:var(--muted);margin-bottom:5px;font-weight:500}
   label .req{color:var(--amber)}
