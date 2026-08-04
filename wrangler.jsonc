@@ -1,0 +1,12 @@
+{
+  "name": "cooling-expense",
+  "main": "index.js",
+  "compatibility_date": "2026-08-04",
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "cooling-expense-db",
+      "database_id": "282cd604-7953-439e-b718-8e8a154724aa"
+    }
+  ]
+}
