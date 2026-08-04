@@ -59,6 +59,16 @@ export default {
       });
     }
 
+    // 沒有 favicon 的話，每次開頁面瀏覽器都會打一次 /favicon.ico 拿到 404
+    if (path === "/favicon.svg" || path === "/favicon.ico") {
+      return new Response(FAVICON_SVG, {
+        headers: {
+          "Content-Type": "image/svg+xml; charset=utf-8",
+          "Cache-Control": "public, max-age=86400",
+        },
+      });
+    }
+
     // ---- API ----
     if (path === "/api/bootstrap" && request.method === "GET") {
       return handleBootstrap(env);
@@ -330,6 +340,14 @@ async function handleExportCsv(env) {
   });
 }
 
+/** 雪花圖示，配色沿用介面的 accent 藍 */
+const FAVICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+<rect width="32" height="32" rx="7" fill="#2E86AB"/>
+<g stroke="#fff" stroke-width="2.1" stroke-linecap="round">
+<path d="M16 5.5v21M6.9 10.75l18.2 10.5M6.9 21.25l18.2-10.5"/>
+<path d="M12.6 8.2 16 10.3l3.4-2.1M12.6 23.8 16 21.7l3.4 2.1"/>
+</g></svg>`;
+
 const INDEX_HTML = String.raw`<!DOCTYPE html>
 <html lang="zh-Hant">
 <head>
@@ -337,6 +355,7 @@ const INDEX_HTML = String.raw`<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
 <title>冷凍空調 · 每日開銷</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <style>
   :root{
     color-scheme:light;
@@ -446,7 +465,8 @@ const INDEX_HTML = String.raw`<!DOCTYPE html>
 
   /* ---- 橫向長條清單 ---- */
   .bl{display:flex;flex-direction:column;gap:10px}
-  .bl-row{display:grid;grid-template-columns:96px 1fr 74px 42px;align-items:center;gap:10px;font-size:12.5px}
+  /* 名稱欄要放得下最長的「信用卡（個人代墊）」9 個字，否則會被截成「信用卡（個人…」 */
+  .bl-row{display:grid;grid-template-columns:118px 1fr 74px 42px;align-items:center;gap:10px;font-size:12.5px}
   .bl-name{color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .bl-track{height:8px;background:var(--track);border-radius:4px;overflow:hidden}
   .bl-fill{height:100%;background:var(--accent);border-radius:0 4px 4px 0;transition:width .45s ease}
