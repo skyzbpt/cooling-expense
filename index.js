@@ -14,7 +14,7 @@ const CATEGORIES = {
   "公司固定雜支": ["餐費", "勞健保", "車子分期"],
   "其他": ["其他"],
 };
-const PAYMENTS = ["現金", "轉帳", "信用卡", "其他"];
+const PAYMENTS = ["現金", "公司戶轉帳", "現金（零用金）", "信用卡（公司卡）", "信用卡（個人代墊）", "其他"];
 
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
