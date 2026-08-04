@@ -71,6 +71,12 @@ async function handleBootstrap(env) {
   let monthTotal = 0, yearTotal = 0;
   const monthByCat = {};
 
+  // 統計表用的累加器
+  const personAgg = {};  // 經手人 → { total, count }
+  const dayAgg = {};     // YYYY-MM-DD → total
+  const monthAgg = {};   // YYYY-MM → total
+  const yearAgg = {};    // YYYY → total
+
   for (const r of results) {
     const d = new Date(r.date + "T00:00:00");
     const amt = Number(r.amount) || 0;
@@ -81,7 +87,40 @@ async function handleBootstrap(env) {
         monthByCat[r.category] = (monthByCat[r.category] || 0) + amt;
       }
     }
+
+    const day = String(r.date).slice(0, 10);
+    const mon = day.slice(0, 7);
+    const yr = day.slice(0, 4);
+    dayAgg[day] = (dayAgg[day] || 0) + amt;
+    monthAgg[mon] = (monthAgg[mon] || 0) + amt;
+    yearAgg[yr] = (yearAgg[yr] || 0) + amt;
+
+    const person = (r.person || "").trim() || "未填";
+    if (!personAgg[person]) personAgg[person] = { total: 0, count: 0 };
+    personAgg[person].total += amt;
+    personAgg[person].count += 1;
   }
+
+  const grandTotal = Object.values(yearAgg).reduce((a, b) => a + b, 0);
+
+  // 經手人：金額由大到小
+  const byPerson = Object.keys(personAgg)
+    .map((name) => ({
+      name,
+      total: personAgg[name].total,
+      count: personAgg[name].count,
+      pct: grandTotal ? (personAgg[name].total / grandTotal) * 100 : 0,
+    }))
+    .sort((a, b) => b.total - a.total);
+
+  const toRows = (obj) =>
+    Object.keys(obj)
+      .sort((a, b) => (a < b ? 1 : -1)) // 新的在上面
+      .map((k) => ({ key: k, total: obj[k] }));
+
+  const byDay = toRows(dayAgg).slice(0, 31);   // 最近 31 天（有紀錄的）
+  const byMonth = toRows(monthAgg).slice(0, 24); // 最近 24 個月
+  const byYear = toRows(yearAgg);
 
   const recent = results
     .slice(-15)
@@ -105,6 +144,10 @@ async function handleBootstrap(env) {
     monthLabel: `${m + 1}月`,
     monthByCat,
     recent,
+    byPerson,
+    byDay,
+    byMonth,
+    byYear,
   });
 }
 
@@ -283,6 +326,26 @@ const INDEX_HTML = String.raw`<!DOCTYPE html>
   </div>
 
   <div class="card">
+    <h2>經手人 / 代墊 統計</h2>
+    <div id="personBox"><div class="loading">載入中…</div></div>
+  </div>
+
+  <div class="card">
+    <h2>每日支出</h2>
+    <div id="dayBox"><div class="loading">載入中…</div></div>
+  </div>
+
+  <div class="card">
+    <h2>每月支出</h2>
+    <div id="monthBox"><div class="loading">載入中…</div></div>
+  </div>
+
+  <div class="card">
+    <h2>每年支出</h2>
+    <div id="yearBox"><div class="loading">載入中…</div></div>
+  </div>
+
+  <div class="card">
     <h2>最近紀錄</h2>
     <div id="recentBox"><div class="loading">載入中…</div></div>
   </div>
@@ -319,7 +382,46 @@ function render(data){
     });
   }
   renderBars(data);
+  renderPerson(data.byPerson);
+  renderPeriod('dayBox', data.byDay, '日期', fmtDay);
+  renderPeriod('monthBox', data.byMonth, '月份', fmtMonth);
+  renderPeriod('yearBox', data.byYear, '年份', fmtYear);
   renderRecent(data.recent);
+}
+
+function fmtDay(k){ var p = k.split('-'); return p[0]+'/'+p[1]+'/'+p[2]; }
+function fmtMonth(k){ var p = k.split('-'); return p[0]+' 年 '+Number(p[1])+' 月'; }
+function fmtYear(k){ return k+' 年'; }
+
+function renderPerson(list){
+  var box = el('personBox');
+  if(!list || !list.length){ box.innerHTML = '<div class="empty">還沒有經手人資料</div>'; return; }
+  var total = list.reduce(function(s,r){ return s + r.total; }, 0);
+  var rows = list.map(function(r){
+    return '<tr><td>'+esc(r.name)+'</td>'
+      + '<td class="hide-sm t-date">'+nf(r.count)+' 筆</td>'
+      + '<td class="t-date" style="text-align:right">'+r.pct.toFixed(1)+'%</td>'
+      + '<td class="t-amt">'+nf(r.total)+'</td></tr>';
+  }).join('');
+  box.innerHTML = '<table><thead><tr><th>經手人 / 代墊</th><th class="hide-sm">筆數</th>'
+    + '<th style="text-align:right">佔比</th><th style="text-align:right">金額</th></tr></thead>'
+    + '<tbody>'+rows+'</tbody>'
+    + '<tfoot><tr><td style="font-weight:600;padding-top:10px">合計</td><td class="hide-sm"></td><td></td>'
+    + '<td class="t-amt" style="padding-top:10px">'+nf(total)+'</td></tr></tfoot></table>';
+}
+
+function renderPeriod(boxId, list, label, fmt){
+  var box = el(boxId);
+  if(!list || !list.length){ box.innerHTML = '<div class="empty">還沒有支出紀錄</div>'; return; }
+  var max = list.reduce(function(m,r){ return Math.max(m, r.total); }, 0);
+  var rows = list.map(function(r){
+    var pct = max ? Math.max(3, (r.total/max)*100) : 0;
+    return '<tr><td class="t-date">'+esc(fmt(r.key))+'</td>'
+      + '<td class="hide-sm"><div class="bar-track"><div class="bar-fill" style="width:'+pct+'%"></div></div></td>'
+      + '<td class="t-amt">'+nf(r.total)+'</td></tr>';
+  }).join('');
+  box.innerHTML = '<table><thead><tr><th>'+label+'</th><th class="hide-sm"></th>'
+    + '<th style="text-align:right">金額</th></tr></thead><tbody>'+rows+'</tbody></table>';
 }
 
 function renderBars(data){
