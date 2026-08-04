@@ -403,6 +403,7 @@ const INDEX_HTML = String.raw`<!DOCTYPE html>
   select:disabled{opacity:.5;cursor:not-allowed}
   textarea{resize:vertical;min-height:44px}
   #amount{font-size:19px;font-weight:600;font-variant-numeric:tabular-nums}
+  input[type="date"],input[type="number"]{min-width:0}
   .btn-row{display:flex;gap:10px;margin-top:18px}
   button{font-family:inherit;font-size:15px;font-weight:600;cursor:pointer;border:none;border-radius:10px;
     padding:13px 18px;transition:opacity .15s,transform .1s,background .15s,color .15s}
