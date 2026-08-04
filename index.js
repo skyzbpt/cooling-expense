@@ -425,6 +425,24 @@ const INDEX_HTML = String.raw`<!DOCTYPE html>
   /* 日期、數字、文字、下拉的原生高度各不相同（40.5／44／38／40），
      一律鎖成同一個高度，欄位才會跟費用類別、品名對齊 */
   .grid input,.grid select{height:var(--ctl-h);min-width:0}
+
+  /* Safari／iOS 的 input[type=date] 是原生元件，會照內容決定自己的寬高，
+     不關掉 appearance 的話 width:100% 和 height 都會被忽略，欄位就比別人短或矮。
+     以下把它的內部元件全部歸零，逼它跟其他欄位長得一模一樣。 */
+  input[type="date"]{-webkit-appearance:none;appearance:none;
+    width:100%;max-width:100%;min-width:0;display:block;
+    height:var(--ctl-h);line-height:normal;text-align:left}
+  input[type="date"]::-webkit-date-and-time-value{
+    text-align:left;margin:0;padding:0;min-height:0;line-height:normal}
+  input[type="date"]::-webkit-datetime-edit{padding:0;line-height:normal}
+  input[type="date"]::-webkit-datetime-edit-fields-wrapper{padding:0}
+  input[type="date"]::-webkit-inner-spin-button{display:none;-webkit-appearance:none;margin:0}
+  input[type="date"]::-webkit-clear-button{display:none;-webkit-appearance:none}
+  input[type="date"]::-webkit-calendar-picker-indicator{margin:0;padding:0;flex:none}
+  /* 數字欄位的上下箭頭也會多佔寬度 */
+  input[type="number"]{-webkit-appearance:none;appearance:none;margin:0}
+  input[type="number"]::-webkit-outer-spin-button,
+  input[type="number"]::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
   #amount,#e_amount{font-weight:600;font-variant-numeric:tabular-nums}
   .btn-row{display:flex;gap:10px;margin-top:18px}
   button{font-family:inherit;font-size:15px;font-weight:600;cursor:pointer;border:none;border-radius:10px;
