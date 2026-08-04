@@ -63,11 +63,18 @@ export default {
     if (path === "/api/bootstrap" && request.method === "GET") {
       return handleBootstrap(env);
     }
+    if (path === "/api/expenses" && request.method === "GET") {
+      return handleSearch(url, env);
+    }
     if (path === "/api/expenses" && request.method === "POST") {
       return handleAdd(request, env);
     }
-    if (path === "/api/expenses/last" && request.method === "DELETE") {
-      return handleDeleteLast(env);
+    const one = path.match(/^\/api\/expenses\/(\d+)$/);
+    if (one && request.method === "PUT") {
+      return handleUpdate(Number(one[1]), request, env);
+    }
+    if (one && request.method === "DELETE") {
+      return handleDelete(Number(one[1]), env);
     }
     if (path === "/api/export.csv" && request.method === "GET") {
       return handleExportCsv(env);
@@ -182,9 +189,10 @@ async function handleBootstrap(env) {
   };
 
   const recent = results
-    .slice(-15)
+    .slice(-50)
     .reverse()
     .map((r) => ({
+      id: r.id,
       date: String(r.date || "").slice(0, 10),
       category: r.category,
       item: r.item,
@@ -211,42 +219,91 @@ async function handleBootstrap(env) {
   });
 }
 
-async function handleAdd(request, env) {
+/** 新增與編輯共用的欄位檢查，回傳 [清乾淨的值, 錯誤訊息] */
+async function readExpense(request) {
   let body;
   try {
     body = await request.json();
   } catch {
-    return json({ error: "格式錯誤" }, 400);
+    return [null, "格式錯誤"];
   }
-
   const { date, category, item, amount, payment, person, note } = body;
   if (!date || !category || !item || amount === undefined || amount === null || amount === "") {
-    return json({ error: "日期、費用類別、品名、金額為必填" }, 400);
+    return [null, "日期、費用類別、品名、金額為必填"];
   }
   const amt = Number(amount);
-  if (Number.isNaN(amt)) {
-    return json({ error: "金額必須是數字" }, 400);
-  }
+  if (Number.isNaN(amt)) return [null, "金額必須是數字"];
+  return [
+    { date, category, item, amount: amt, payment: payment || "", person: person || "", note: note || "" },
+    null,
+  ];
+}
+
+async function handleAdd(request, env) {
+  const [rec, err] = await readExpense(request);
+  if (err) return json({ error: err }, 400);
 
   await env.DB.prepare(
     `INSERT INTO expenses (date, category, item, amount, payment, person, note)
      VALUES (?, ?, ?, ?, ?, ?, ?)`
   )
-    .bind(date, category, item, amt, payment || "", person || "", note || "")
+    .bind(rec.date, rec.category, rec.item, rec.amount, rec.payment, rec.person, rec.note)
     .run();
 
   return handleBootstrap(env);
 }
 
-async function handleDeleteLast(env) {
-  const { results } = await env.DB.prepare(
-    "SELECT id FROM expenses ORDER BY id DESC LIMIT 1"
-  ).all();
-  if (!results.length) {
-    return json({ error: "目前沒有可刪除的紀錄" }, 400);
-  }
-  await env.DB.prepare("DELETE FROM expenses WHERE id = ?").bind(results[0].id).run();
+async function handleUpdate(id, request, env) {
+  const [rec, err] = await readExpense(request);
+  if (err) return json({ error: err }, 400);
+
+  const { results } = await env.DB.prepare("SELECT id FROM expenses WHERE id = ?").bind(id).all();
+  if (!results.length) return json({ error: "找不到這筆紀錄，可能已被刪除" }, 404);
+
+  await env.DB.prepare(
+    `UPDATE expenses SET date = ?, category = ?, item = ?, amount = ?,
+     payment = ?, person = ?, note = ? WHERE id = ?`
+  )
+    .bind(rec.date, rec.category, rec.item, rec.amount, rec.payment, rec.person, rec.note, id)
+    .run();
+
   return handleBootstrap(env);
+}
+
+async function handleDelete(id, env) {
+  const { results } = await env.DB.prepare("SELECT id FROM expenses WHERE id = ?").bind(id).all();
+  if (!results.length) return json({ error: "找不到這筆紀錄，可能已被刪除" }, 404);
+
+  await env.DB.prepare("DELETE FROM expenses WHERE id = ?").bind(id).run();
+  return handleBootstrap(env);
+}
+
+/** 搜尋全部歷史紀錄，讓舊資料也編輯得到（最近紀錄只列最新 50 筆） */
+async function handleSearch(url, env) {
+  const q = (url.searchParams.get("q") || "").trim();
+  if (!q) return json({ rows: [] });
+  const like = "%" + q + "%";
+  const { results } = await env.DB.prepare(
+    `SELECT id, date, category, item, amount, payment, person, note FROM expenses
+     WHERE item LIKE ? OR category LIKE ? OR person LIKE ? OR note LIKE ?
+        OR payment LIKE ? OR date LIKE ?
+     ORDER BY date DESC, id DESC LIMIT 100`
+  )
+    .bind(like, like, like, like, like, like)
+    .all();
+
+  return json({
+    rows: results.map((r) => ({
+      id: r.id,
+      date: String(r.date || "").slice(0, 10),
+      category: r.category,
+      item: r.item,
+      amount: r.amount,
+      payment: r.payment,
+      person: r.person,
+      note: r.note,
+    })),
+  });
 }
 
 async function handleExportCsv(env) {
@@ -426,9 +483,30 @@ const INDEX_HTML = String.raw`<!DOCTYPE html>
   .t-amt{text-align:right;font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}
   .t-num{text-align:right;font-variant-numeric:tabular-nums;color:var(--muted)}
   .t-note{color:var(--muted);font-size:12px;margin-top:2px}
+  .t-meta{display:none;color:var(--muted);font-size:11.5px;margin-top:3px}
   .empty,.loading{text-align:center;color:var(--muted);font-size:13px;padding:28px 0}
   .export{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--accent);text-decoration:none;font-weight:600}
   .export:hover{text-decoration:underline}
+
+  /* ---- 單筆操作 ---- */
+  .search{width:210px;font-size:12.5px;padding:8px 11px;border-radius:9px}
+  .t-act{white-space:nowrap;text-align:right}
+  .rbtn{font-size:12px;font-weight:600;padding:5px 9px;border-radius:7px;background:var(--raise);
+    color:var(--muted);border:1px solid var(--line);margin-left:5px}
+  .rbtn:hover{color:var(--accent);border-color:var(--accent)}
+  .rbtn.del:hover{color:var(--danger);border-color:var(--danger)}
+
+  /* ---- 編輯視窗 ---- */
+  .modal{position:fixed;inset:0;z-index:60;background:rgba(11,26,33,.55);
+    display:flex;align-items:center;justify-content:center;padding:16px;overflow-y:auto}
+  .modal[hidden]{display:none}
+  .modal-card{background:var(--surface);border:1px solid var(--line);border-radius:14px;
+    padding:22px;width:100%;max-width:540px;box-shadow:0 12px 40px rgba(0,0,0,.28);margin:auto}
+  .modal-card h2{font-size:15px;font-weight:700;color:var(--ink);margin-bottom:18px;
+    display:flex;align-items:center;gap:8px;white-space:nowrap}
+  .modal-card h2::before{content:"";width:3px;height:15px;background:var(--accent);border-radius:2px;flex:none}
+  .modal-msg{display:none;font-size:13px;color:var(--danger);margin-top:12px}
+  .modal-msg.on{display:block}
 
   /* ---- Tooltip ---- */
   #tip{position:fixed;z-index:99;pointer-events:none;opacity:0;transition:opacity .12s;
@@ -454,6 +532,12 @@ const INDEX_HTML = String.raw`<!DOCTYPE html>
     .chart{padding-left:42px}
     .gl b{left:-42px;width:36px}
     .hide-sm{display:none}
+    /* 窄螢幕：類別／支付／經手人收進品名底下，品名才有寬度不會一字一行 */
+    .t-meta{display:block}
+    .search{width:100%}
+    .head-tools{width:100%;justify-content:space-between}
+    td,th{padding-left:5px;padding-right:5px}
+    .rbtn{font-size:11.5px;padding:5px 8px;margin-left:4px}
   }
   @media(prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
@@ -503,7 +587,6 @@ const INDEX_HTML = String.raw`<!DOCTYPE html>
     </div>
     <div class="btn-row">
       <button class="primary" id="saveBtn">儲存這筆</button>
-      <button class="ghost" id="undoBtn">刪除最後一筆</button>
     </div>
     <div id="msg"></div>
   </div>
@@ -556,14 +639,41 @@ const INDEX_HTML = String.raw`<!DOCTYPE html>
   </div>
 
   <div class="card">
-    <div class="card-head"><h2>最近紀錄</h2>
-      <a class="export" href="/api/export.csv">↓ 下載 CSV</a>
+    <div class="card-head">
+      <div>
+        <h2>紀錄明細</h2>
+        <div class="sub" id="listSub">最新 50 筆，可直接編輯或刪除</div>
+      </div>
+      <div class="head-tools">
+        <input type="search" id="search" class="search" placeholder="搜尋品名、經手人、備註、日期…">
+        <a class="export" href="/api/export.csv">↓ 下載 CSV</a>
+      </div>
     </div>
     <div id="recentBox"><div class="loading">載入中…</div></div>
   </div>
 </div>
 
 <div id="tip"></div>
+
+<div class="modal" id="editModal" hidden>
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="editTitle">
+    <h2 id="editTitle">編輯這筆支出</h2>
+    <div class="grid">
+      <div><label>日期 <span class="req">*</span></label><input type="date" id="e_date"></div>
+      <div><label>金額 <span class="req">*</span></label><input type="number" id="e_amount" inputmode="numeric"></div>
+      <div><label>費用類別 <span class="req">*</span></label><select id="e_category"></select></div>
+      <div><label>品名 <span class="req">*</span></label><select id="e_item"></select></div>
+      <div><label>支付方式</label><select id="e_payment"></select></div>
+      <div><label>經手人 / 代墊</label><input type="text" id="e_person"></div>
+      <div class="full"><label>發票 / 備註</label><textarea id="e_note" rows="2"></textarea></div>
+    </div>
+    <div id="editMsg" class="modal-msg"></div>
+    <div class="btn-row">
+      <button class="primary" id="editSave">儲存變更</button>
+      <button class="ghost" id="editCancel">取消</button>
+    </div>
+  </div>
+</div>
 
 <script>
 var DATA = null;
@@ -771,22 +881,147 @@ function renderHeat(){
     + '</div></div>';
 }
 
-/* ---------- 最近紀錄 ---------- */
-function renderRecent(list){
+/* ---------- 紀錄明細（可編輯／刪除） ---------- */
+var ROWS = {};   // id -> 紀錄，編輯時直接取用
+
+function renderList(list, emptyText){
   var box = el('recentBox');
-  if(!list || !list.length){ box.innerHTML = '<div class="empty">還沒有任何紀錄，從上面記第一筆吧</div>'; return; }
+  ROWS = {};
+  if(!list || !list.length){ box.innerHTML = '<div class="empty">' + esc(emptyText) + '</div>'; return; }
   var rows = list.map(function(r){
+    ROWS[r.id] = r;
+    var meta = [r.category, r.payment, r.person].filter(function(v){ return v; }).join(' · ');
     return '<tr><td class="t-date">' + esc(fmtDay(r.date)) + '</td>'
-      + '<td><span class="t-cat">' + esc(r.category) + '</span></td>'
-      + '<td>' + esc(r.item) + (r.note ? '<div class="t-note">' + esc(r.note) + '</div>' : '') + '</td>'
+      + '<td class="hide-sm"><span class="t-cat">' + esc(r.category) + '</span></td>'
+      + '<td>' + esc(r.item)
+      + '<div class="t-meta">' + esc(meta) + '</div>'
+      + (r.note ? '<div class="t-note">' + esc(r.note) + '</div>' : '') + '</td>'
       + '<td class="hide-sm">' + esc(r.payment) + '</td>'
       + '<td class="hide-sm">' + esc(r.person) + '</td>'
-      + '<td class="t-amt">' + nf0(r.amount) + '</td></tr>';
+      + '<td class="t-amt">' + nf0(r.amount) + '</td>'
+      + '<td class="t-act"><button class="rbtn" data-edit="' + r.id + '">編輯</button>'
+      + '<button class="rbtn del" data-del="' + r.id + '">刪除</button></td></tr>';
   }).join('');
-  box.innerHTML = '<table><thead><tr><th>日期</th><th>類別</th><th>品名</th>'
+  box.innerHTML = '<table><thead><tr><th>日期</th><th class="hide-sm">類別</th><th>品名</th>'
     + '<th class="hide-sm">支付</th><th class="hide-sm">經手人</th>'
-    + '<th style="text-align:right">金額</th></tr></thead><tbody>' + rows + '</tbody></table>';
+    + '<th style="text-align:right">金額</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>';
 }
+
+function renderRecent(list){
+  renderList(list, '還沒有任何紀錄，從上面記第一筆吧');
+}
+
+/* ---------- 搜尋 ---------- */
+var searchTimer = null;
+el('search').addEventListener('input', function(){
+  var q = this.value.trim();
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(function(){
+    if(!q){
+      el('listSub').textContent = '最新 50 筆，可直接編輯或刪除';
+      renderRecent(DATA.recent);
+      return;
+    }
+    el('listSub').textContent = '搜尋「' + q + '」…';
+    fetch('/api/expenses?q=' + encodeURIComponent(q))
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        el('listSub').textContent = '搜尋「' + q + '」：' + d.rows.length + ' 筆'
+          + (d.rows.length >= 100 ? '（只顯示前 100 筆）' : '');
+        renderList(d.rows, '找不到符合「' + q + '」的紀錄');
+      })
+      .catch(function(err){ el('listSub').textContent = '搜尋失敗：' + err.message; });
+  }, 250);
+});
+
+/* ---------- 編輯 / 刪除 ---------- */
+function fillSelect(sel, values, current){
+  sel.innerHTML = '';
+  values.forEach(function(v){
+    var o = document.createElement('option'); o.value = v; o.textContent = v;
+    if(v === current) o.selected = true;
+    sel.appendChild(o);
+  });
+}
+function syncEditItems(current){
+  var cat = el('e_category').value;
+  var items = (DATA.categories[cat] || []).slice();
+  // 舊資料的品名可能已經不在目前的清單裡，保留它才不會一存就被改掉
+  if(current && items.indexOf(current) < 0) items.unshift(current);
+  fillSelect(el('e_item'), items, current);
+}
+
+var editingId = null;
+function openEdit(id){
+  var r = ROWS[id];
+  if(!r) return;
+  editingId = id;
+  el('e_date').value = r.date;
+  el('e_amount').value = r.amount;
+  fillSelect(el('e_category'), Object.keys(DATA.categories), r.category);
+  syncEditItems(r.item);
+  fillSelect(el('e_payment'), [''].concat(DATA.payments), r.payment || '');
+  el('e_payment').options[0].textContent = '未指定';
+  el('e_person').value = r.person || '';
+  el('e_note').value = r.note || '';
+  el('editMsg').className = 'modal-msg';
+  el('editModal').hidden = false;
+  el('e_amount').focus();
+}
+function closeEdit(){ el('editModal').hidden = true; editingId = null; }
+
+el('e_category').addEventListener('change', function(){ syncEditItems(''); });
+el('editCancel').addEventListener('click', closeEdit);
+el('editModal').addEventListener('click', function(e){ if(e.target === this) closeEdit(); });
+document.addEventListener('keydown', function(e){
+  if(e.key === 'Escape' && !el('editModal').hidden) closeEdit();
+});
+
+el('editSave').addEventListener('click', function(){
+  var rec = { date: el('e_date').value, category: el('e_category').value, item: el('e_item').value,
+    amount: el('e_amount').value, payment: el('e_payment').value,
+    person: el('e_person').value, note: el('e_note').value };
+  if(!rec.date || !rec.category || !rec.item || rec.amount === ''){
+    var m = el('editMsg'); m.textContent = '日期、費用類別、品名、金額都要填。'; m.className = 'modal-msg on'; return;
+  }
+  var btn = this; btn.disabled = true; btn.textContent = '儲存中…';
+  fetch('/api/expenses/' + editingId, { method:'PUT', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(rec) })
+    .then(function(r){ return r.json().then(function(d){ return {ok:r.ok, data:d}; }); })
+    .then(function(res){
+      if(!res.ok) throw new Error(res.data.error || '儲存失敗');
+      closeEdit();
+      render(res.data);
+      el('search').value = '';
+      showMsg('已更新：' + rec.category + ' / ' + rec.item + ' / NT$' + nf0(rec.amount), 'ok');
+    })
+    .catch(function(err){
+      var m = el('editMsg'); m.textContent = err.message; m.className = 'modal-msg on';
+    })
+    .finally(function(){ btn.disabled = false; btn.textContent = '儲存變更'; });
+});
+
+el('recentBox').addEventListener('click', function(e){
+  var b = e.target.closest ? e.target.closest('button') : null;
+  if(!b) return;
+  var editId = b.getAttribute('data-edit');
+  if(editId){ openEdit(editId); return; }
+  var delId = b.getAttribute('data-del');
+  if(!delId) return;
+  var r = ROWS[delId];
+  if(!confirm('確定刪除這筆？\n' + fmtDayFull(r.date) + '　' + r.item + '　NT$' + nf0(r.amount))) return;
+  b.disabled = true;
+  fetch('/api/expenses/' + delId, { method:'DELETE' })
+    .then(function(res){ return res.json().then(function(d){ return {ok:res.ok, data:d}; }); })
+    .then(function(res){
+      if(!res.ok) throw new Error(res.data.error || '刪除失敗');
+      render(res.data);
+      el('search').value = '';
+      el('listSub').textContent = '最新 50 筆，可直接編輯或刪除';
+      showMsg('已刪除：' + r.item + ' / NT$' + nf0(r.amount), 'ok');
+    })
+    .catch(function(err){ b.disabled = false; showMsg(err.message, 'err'); });
+});
 
 /* ---------- 主渲染 ---------- */
 function render(data){
@@ -873,26 +1108,13 @@ el('saveBtn').addEventListener('click', function(){
     .then(function(res){
       if(!res.ok){ throw new Error(res.data.error || '儲存失敗'); }
       render(res.data);
+      el('search').value = ''; el('listSub').textContent = '最新 50 筆，可直接編輯或刪除';
       el('amount').value=''; el('person').value=''; el('note').value=''; el('date').value = res.data.today;
       showMsg('已存入：' + rec.category + ' / ' + rec.item + ' / NT$' + nf0(rec.amount), 'ok');
       el('amount').focus();
     })
     .catch(function(err){ showMsg('存不進去：' + err.message, 'err'); })
     .finally(function(){ btn.disabled=false; btn.textContent='儲存這筆'; });
-});
-
-el('undoBtn').addEventListener('click', function(){
-  if(!confirm('要刪除資料庫最後一筆紀錄嗎？')) return;
-  var btn = this; btn.disabled = true;
-  fetch('/api/expenses/last', { method:'DELETE' })
-    .then(function(r){ return r.json().then(function(d){ return {ok:r.ok, data:d}; }); })
-    .then(function(res){
-      if(!res.ok){ throw new Error(res.data.error || '刪除失敗'); }
-      render(res.data);
-      showMsg('已刪除最後一筆。','ok');
-    })
-    .catch(function(err){ showMsg(err.message,'err'); })
-    .finally(function(){ btn.disabled=false; });
 });
 
 fetch('/api/bootstrap').then(function(r){ return r.json(); })
