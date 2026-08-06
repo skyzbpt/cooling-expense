@@ -708,8 +708,8 @@ const INDEX_HTML = String.raw`<!DOCTYPE html>
       <div><label>費用類別 <span class="req">*</span></label><select id="category"><option value="">請選擇</option></select></div>
       <div><label>品名 <span class="req">*</span></label><select id="item" disabled><option value="">先選類別</option></select></div>
       <div><label>支付方式</label><select id="payment"><option value="">未指定</option></select></div>
-      <div><label>經手人 / 代墊</label><input type="text" id="person" placeholder="例：阿明代墊"></div>
-      <div class="full"><label>發票 / 備註</label><textarea id="note" rows="1" placeholder="發票號碼、工地名稱、其他說明"></textarea></div>
+      <div><label>經手人 / 代墊</label><input type="text" id="person" lang="zh-Hant" placeholder="例：阿明代墊"></div>
+      <div class="full"><label>發票 / 備註</label><textarea id="note" lang="zh-Hant" rows="1" placeholder="發票號碼、工地名稱、其他說明"></textarea></div>
     </div>
     <div class="btn-row">
       <button class="primary" id="saveBtn">儲存這筆</button>
@@ -778,7 +778,7 @@ const INDEX_HTML = String.raw`<!DOCTYPE html>
         <div class="sub" id="listSub">最新 50 筆，可直接編輯或刪除</div>
       </div>
       <div class="head-tools">
-        <input type="search" id="search" class="search" placeholder="搜尋品名、經手人、備註、日期…">
+        <input type="search" id="search" class="search" lang="zh-Hant" placeholder="搜尋品名、經手人、備註、日期…">
         <a class="export" href="/api/export.csv">↓ 下載 CSV</a>
       </div>
     </div>
@@ -797,8 +797,8 @@ const INDEX_HTML = String.raw`<!DOCTYPE html>
       <div><label>費用類別 <span class="req">*</span></label><select id="e_category"></select></div>
       <div><label>品名 <span class="req">*</span></label><select id="e_item"></select></div>
       <div><label>支付方式</label><select id="e_payment"></select></div>
-      <div><label>經手人 / 代墊</label><input type="text" id="e_person"></div>
-      <div class="full"><label>發票 / 備註</label><textarea id="e_note" rows="2"></textarea></div>
+      <div><label>經手人 / 代墊</label><input type="text" id="e_person" lang="zh-Hant"></div>
+      <div class="full"><label>發票 / 備註</label><textarea id="e_note" lang="zh-Hant" rows="2"></textarea></div>
     </div>
     <div id="editMsg" class="modal-msg"></div>
     <div class="btn-row">
