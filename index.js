@@ -625,7 +625,7 @@ const INDEX_HTML = String.raw`<!DOCTYPE html>
     <div class="card-head"><h2>記一筆支出</h2></div>
     <div class="grid">
       <div><label>日期 <span class="req">*</span></label><input type="date" id="date"></div>
-      <div><label>金額 <span class="req">*</span></label><input type="number" id="amount" inputmode="numeric" placeholder="0"></div>
+      <div><label>金額 <span class="req">*</span></label><input type="number" id="amount" inputmode="decimal" step="0.01" placeholder="0"></div>
       <div><label>費用類別 <span class="req">*</span></label><select id="category"><option value="">請選擇</option></select></div>
       <div><label>品名 <span class="req">*</span></label><select id="item" disabled><option value="">先選類別</option></select></div>
       <div><label>支付方式</label><select id="payment"><option value="">未指定</option></select></div>
@@ -707,7 +707,7 @@ const INDEX_HTML = String.raw`<!DOCTYPE html>
     <h2 id="editTitle">編輯這筆支出</h2>
     <div class="grid">
       <div><label>日期 <span class="req">*</span></label><input type="date" id="e_date"></div>
-      <div><label>金額 <span class="req">*</span></label><input type="number" id="e_amount" inputmode="numeric"></div>
+      <div><label>金額 <span class="req">*</span></label><input type="number" id="e_amount" inputmode="decimal" step="0.01"></div>
       <div><label>費用類別 <span class="req">*</span></label><select id="e_category"></select></div>
       <div><label>品名 <span class="req">*</span></label><select id="e_item"></select></div>
       <div><label>支付方式</label><select id="e_payment"></select></div>
