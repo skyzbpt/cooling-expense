@@ -76,6 +76,9 @@ export default {
     if (path === "/api/expenses" && request.method === "GET") {
       return handleSearch(url, env);
     }
+    if (path === "/api/expenses/month" && request.method === "GET") {
+      return handleMonthScope(url, env);
+    }
     if (path === "/api/expenses" && request.method === "POST") {
       return handleAdd(request, env);
     }
@@ -224,8 +227,48 @@ async function handleBootstrap(env) {
       year: packScope(scope.year),
       all: packScope(scope.all),
     },
+    // 經手人月度明細用的月份選擇器邊界：最早有紀錄的月份 ~ 最晚（today 或最後一筆，取較大者）
+    monthRange: {
+      min: results.length ? String(results[0].date).slice(0, 7) : curMonth,
+      max: results.length && String(results[results.length - 1].date).slice(0, 7) > curMonth
+        ? String(results[results.length - 1].date).slice(0, 7)
+        : curMonth,
+    },
     heat,
     recent,
+  });
+}
+
+/** 指定月份的支出結構（類別／支付方式／經手人）＋逐筆明細，給「經手人月度明細」用 */
+async function handleMonthScope(url, env) {
+  const ym = (url.searchParams.get("ym") || "").trim();
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(ym)) return json({ error: "月份格式錯誤" }, 400);
+
+  const { results } = await env.DB.prepare(
+    "SELECT * FROM expenses WHERE date LIKE ? ORDER BY date DESC, id DESC"
+  )
+    .bind(ym + "%")
+    .all();
+
+  const scope = newScope();
+  for (const r of results) addTo(scope, r, Number(r.amount) || 0);
+
+  const rows = results.map((r) => ({
+    id: r.id,
+    date: String(r.date || "").slice(0, 10),
+    category: r.category,
+    item: r.item,
+    amount: r.amount,
+    payment: r.payment,
+    person: r.person,
+    note: r.note,
+  }));
+
+  return json({
+    month: ym,
+    monthLabel: Number(ym.slice(5, 7)) + "月",
+    ...packScope(scope),
+    rows,
   });
 }
 
@@ -469,6 +512,35 @@ const INDEX_HTML = String.raw`<!DOCTYPE html>
   .head-tools{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
   .linkbtn{background:none;border:none;font-size:12.5px;font-weight:600;color:var(--muted);padding:6px 4px}
   .linkbtn:hover{color:var(--accent)}
+  .scope-tools{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+
+  /* ---- 經手人月度：月份導覽 ---- */
+  .month-nav{display:inline-flex;align-items:center;background:var(--track);border-radius:10px;padding:3px;gap:1px}
+  .mnav-btn{background:transparent;color:var(--muted);font-size:15px;font-weight:700;padding:5px 9px;
+    border-radius:8px;line-height:1;font-family:inherit}
+  .mnav-btn:hover:not(:disabled){color:var(--accent);background:var(--surface)}
+  .mnav-btn:disabled{opacity:.35;cursor:not-allowed}
+  .mnav-label{font-size:12.5px;font-weight:600;padding:6px 10px;border-radius:8px;background:transparent;
+    color:var(--muted);white-space:nowrap;font-variant-numeric:tabular-nums}
+  .mnav-label[aria-pressed="true"]{background:var(--surface);color:var(--accent);box-shadow:var(--shadow)}
+  #mToday{border:1px solid var(--line);border-radius:8px}
+
+  /* ---- 經手人月度明細（展開列） ---- */
+  .pane h3{display:flex;align-items:center;gap:8px}
+  .hint{font-size:11px;font-weight:500;color:var(--muted);letter-spacing:0}
+  .pt-clickable{cursor:pointer}
+  .pt-clickable:hover td{background:var(--raise)}
+  .pt-chev{width:22px;padding-right:0}
+  .chev{display:inline-block;color:var(--muted);font-size:11px;transition:transform .15s ease}
+  .pt-row.open .chev{transform:rotate(90deg);color:var(--accent)}
+  .pt-detail td{padding:0 8px 12px;border-bottom:1px solid var(--grid)}
+  .pt-list{display:flex;flex-direction:column;gap:1px;background:var(--track);border-radius:8px;overflow:hidden}
+  .pt-item{display:grid;grid-template-columns:52px 1fr auto auto;gap:10px;align-items:center;
+    background:var(--surface);padding:8px 10px;font-size:12.5px}
+  .pt-date{color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
+  .pt-name{color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .pt-meta{color:var(--muted);font-size:11px;white-space:nowrap}
+  .pt-amt{text-align:right;font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}
 
   /* ---- 柱狀圖 ---- */
   .chart{padding-left:48px;padding-top:14px;position:relative}
@@ -585,6 +657,13 @@ const INDEX_HTML = String.raw`<!DOCTYPE html>
     .head-tools{width:100%;justify-content:space-between}
     td,th{padding-left:5px;padding-right:5px}
     .rbtn{font-size:11.5px;padding:5px 8px;margin-left:4px}
+    /* 窄螢幕：經手人明細的逐筆列，類別／支付方式收到第二行，才不會擠成五欄 */
+    .scope-tools{width:100%;justify-content:space-between}
+    .pt-item{grid-template-columns:44px 1fr auto;grid-template-areas:"date name amt" "meta meta meta";gap:3px 8px}
+    .pt-date{grid-area:date}
+    .pt-name{grid-area:name;white-space:normal}
+    .pt-amt{grid-area:amt}
+    .pt-meta{grid-area:meta}
   }
   @media(prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
@@ -662,16 +741,23 @@ const INDEX_HTML = String.raw`<!DOCTYPE html>
         <h2>支出結構</h2>
         <div class="sub" id="scopeSub">&nbsp;</div>
       </div>
-      <div class="seg" id="scopeSeg">
-        <button data-scope="month" aria-pressed="true">本月</button>
-        <button data-scope="year" aria-pressed="false">今年</button>
-        <button data-scope="all" aria-pressed="false">全部</button>
+      <div class="scope-tools">
+        <div class="month-nav" id="monthNav">
+          <button class="mnav-btn" id="mPrev" type="button" aria-label="上一個月">‹</button>
+          <button class="mnav-label" id="mLabel" type="button" aria-pressed="true">本月</button>
+          <button class="mnav-btn" id="mNext" type="button" aria-label="下一個月">›</button>
+        </div>
+        <button class="linkbtn" id="mToday" type="button" hidden>回本月</button>
+        <div class="seg" id="scopeSeg">
+          <button data-scope="year" aria-pressed="false">今年</button>
+          <button data-scope="all" aria-pressed="false">全部</button>
+        </div>
       </div>
     </div>
     <div class="panes">
       <div class="pane"><h3>費用類別</h3><div id="catBox"><div class="loading">載入中…</div></div></div>
       <div class="pane"><h3>支付方式</h3><div id="payBox"><div class="loading">載入中…</div></div></div>
-      <div class="pane wide"><h3>經手人 / 代墊</h3><div id="personBox"><div class="loading">載入中…</div></div></div>
+      <div class="pane wide"><h3>經手人 / 代墊<span class="hint" id="personHint"></span></h3><div id="personBox"><div class="loading">載入中…</div></div></div>
     </div>
   </div>
 
@@ -724,7 +810,7 @@ const INDEX_HTML = String.raw`<!DOCTYPE html>
 
 <script>
 var DATA = null;
-var STATE = { trend: 'month', trendView: 'chart', scope: 'month' };
+var STATE = { trend: 'month', trendView: 'chart', scope: 'month', ym: null };
 
 function el(id){ return document.getElementById(id); }
 function nf(n){ return (Number(n)||0).toLocaleString('en-US'); }
@@ -857,33 +943,138 @@ function barList(rows, unitFmt){
   }).join('') + '</div>';
 }
 
-function personTable(rows){
+/** txByPerson 有值時（月度明細模式）每一列可以點開看逐筆支出 */
+function personTable(rows, txByPerson){
   if(!rows || !rows.length) return '<div class="empty">這段期間還沒有紀錄</div>';
   var max = rows[0].total || 1;
   var sum = rows.reduce(function(s,r){ return s+r.total; }, 0);
-  var body = rows.map(function(r){
+  var canExpand = !!txByPerson;
+  var cols = canExpand ? 6 : 5;
+  var body = rows.map(function(r, idx){
     var w = Math.max(2, (r.total/max)*100);
-    return '<tr><td>' + esc(r.name) + '</td>'
-      + '<td class="hide-sm" style="width:34%"><div class="bl-track"><div class="bl-fill" style="width:' + w + '%"></div></div></td>'
+    var chevTd = canExpand ? '<td class="pt-chev"><span class="chev">▸</span></td>' : '';
+    var detail = '';
+    if(canExpand){
+      var list = txByPerson[r.name] || [];
+      detail = '<tr class="pt-detail" id="pd-' + idx + '" hidden><td colspan="' + cols + '">'
+        + (list.length
+          ? '<div class="pt-list">' + list.map(function(t){
+              return '<div class="pt-item"><span class="pt-date">' + esc(fmtDay(t.date)) + '</span>'
+                + '<span class="pt-name">' + esc(t.item) + '</span>'
+                + '<span class="pt-meta">' + esc(t.category) + ' · ' + esc(t.payment || '未指定') + '</span>'
+                + '<span class="pt-amt">NT$ ' + nf0(t.amount) + '</span></div>';
+            }).join('') + '</div>'
+          : '<div class="empty" style="padding:8px 0">這個月沒有這位的明細</div>')
+        + '</td></tr>';
+    }
+    return '<tr class="pt-row' + (canExpand ? ' pt-clickable' : '') + '" data-idx="' + idx + '">'
+      + chevTd + '<td>' + esc(r.name) + '</td>'
+      + '<td class="hide-sm" style="width:30%"><div class="bl-track"><div class="bl-fill" style="width:' + w + '%"></div></div></td>'
       + '<td class="t-num">' + r.count + ' 筆</td>'
       + '<td class="t-num">' + r.pct.toFixed(1) + '%</td>'
-      + '<td class="t-amt">' + nf0(r.total) + '</td></tr>';
+      + '<td class="t-amt">' + nf0(r.total) + '</td></tr>'
+      + detail;
   }).join('');
-  return '<table><thead><tr><th>經手人 / 代墊</th><th class="hide-sm"></th>'
+  return '<table><thead><tr>' + (canExpand ? '<th></th>' : '') + '<th>經手人 / 代墊</th><th class="hide-sm"></th>'
     + '<th style="text-align:right">筆數</th><th style="text-align:right">佔比</th>'
     + '<th style="text-align:right">金額</th></tr></thead><tbody>' + body + '</tbody>'
-    + '<tfoot><tr><td>合計</td><td class="hide-sm"></td><td></td><td></td>'
+    + '<tfoot><tr>' + (canExpand ? '<td></td>' : '') + '<td>合計</td><td class="hide-sm"></td><td></td><td></td>'
     + '<td class="t-amt">' + nf0(sum) + '</td></tr></tfoot></table>';
 }
 
+/** 依經手人分組逐筆支出，'' 統一併入「未填」，跟後端聚合口徑一致 */
+function groupByPerson(rows){
+  var out = {};
+  (rows || []).forEach(function(t){
+    var name = String(t.person || '').trim() || '未填';
+    (out[name] = out[name] || []).push(t);
+  });
+  return out;
+}
+
+/* ---------- 經手人月度明細：月份選擇與快取 ---------- */
+var monthCache = {};      // ym -> /api/expenses/month 回傳結果
+var monthReqSeq = 0;      // 避免使用者連續切月份時，舊的請求晚回來蓋掉新畫面
+
+function shiftYm(ym, delta){
+  var y = Number(ym.slice(0,4)), m = Number(ym.slice(5,7));
+  var d = new Date(Date.UTC(y, m - 1 + delta, 1));
+  return d.toISOString().slice(0,7);
+}
+function ymLabel(ym){ return Number(ym.slice(0,4)) + '年' + Number(ym.slice(5,7)) + '月'; }
+
+function loadMonth(ym){
+  if(monthCache[ym]) return Promise.resolve(monthCache[ym]);
+  return fetch('/api/expenses/month?ym=' + ym).then(function(r){ return r.json(); })
+    .then(function(d){ monthCache[ym] = d; return d; });
+}
+
+function updateMonthNav(){
+  var r = DATA.monthRange;
+  el('mLabel').textContent = ymLabel(STATE.ym);
+  el('mLabel').setAttribute('aria-pressed', String(STATE.scope === 'month'));
+  el('mPrev').disabled = STATE.ym <= r.min;
+  el('mNext').disabled = STATE.ym >= r.max;
+  el('mToday').hidden = STATE.ym === DATA.today.slice(0,7);
+}
+
+function goToMonth(ym){
+  var r = DATA.monthRange;
+  if(ym < r.min || ym > r.max) return;
+  STATE.ym = ym;
+  STATE.scope = 'month';
+  Array.prototype.forEach.call(el('scopeSeg').querySelectorAll('button'), function(x){
+    x.setAttribute('aria-pressed', 'false');
+  });
+  updateMonthNav();
+  renderBreakdown();
+}
+
 function renderBreakdown(){
+  if(STATE.scope === 'month'){
+    updateMonthNav();
+    var seq = ++monthReqSeq, ym = STATE.ym;
+    el('catBox').innerHTML = '<div class="loading">載入中…</div>';
+    el('payBox').innerHTML = '<div class="loading">載入中…</div>';
+    el('personBox').innerHTML = '<div class="loading">載入中…</div>';
+    el('personHint').textContent = '';
+    loadMonth(ym).then(function(d){
+      if(seq !== monthReqSeq) return;   // 使用者已經切到別的月份，這筆回應過期了
+      el('scopeSub').textContent = ymLabel(ym) + '共 ' + nf(d.count) + ' 筆 · NT$ ' + nf0(d.total);
+      el('catBox').innerHTML = barList(d.cat);
+      el('payBox').innerHTML = barList(d.pay);
+      el('personHint').textContent = d.count ? '（點一列看逐筆明細）' : '';
+      el('personBox').innerHTML = personTable(d.person, groupByPerson(d.rows));
+    }).catch(function(err){
+      if(seq !== monthReqSeq) return;
+      var msg = '<div class="empty">載入失敗：' + esc(err.message) + '</div>';
+      el('catBox').innerHTML = msg; el('payBox').innerHTML = msg; el('personBox').innerHTML = msg;
+    });
+    return;
+  }
+  el('mLabel').setAttribute('aria-pressed', 'false');
   var s = DATA.scopes[STATE.scope];
-  var name = { month: DATA.monthLabel, year: '今年', all: '全部期間' }[STATE.scope];
+  var name = { year: '今年', all: '全部期間' }[STATE.scope];
   el('scopeSub').textContent = name + '共 ' + nf(s.count) + ' 筆 · NT$ ' + nf0(s.total);
+  el('personHint').textContent = '';
   el('catBox').innerHTML = barList(s.cat);
   el('payBox').innerHTML = barList(s.pay);
   el('personBox').innerHTML = personTable(s.person);
 }
+
+el('mPrev').addEventListener('click', function(){ goToMonth(shiftYm(STATE.ym, -1)); });
+el('mNext').addEventListener('click', function(){ goToMonth(shiftYm(STATE.ym, 1)); });
+el('mLabel').addEventListener('click', function(){ goToMonth(STATE.ym); });
+el('mToday').addEventListener('click', function(){ goToMonth(DATA.today.slice(0,7)); });
+
+el('personBox').addEventListener('click', function(e){
+  var row = e.target.closest ? e.target.closest('.pt-clickable') : null;
+  if(!row) return;
+  var detail = document.getElementById('pd-' + row.getAttribute('data-idx'));
+  if(!detail) return;
+  detail.hidden = !detail.hidden;
+  row.classList.toggle('open', !detail.hidden);
+});
 
 /* ---------- 熱力圖 ---------- */
 var HEAT_WD_W = 14, HEAT_GAP = 3, HEAT_CELL = 15;   // 標籤欄寬、格子間距、理想格子邊長
@@ -1092,6 +1283,7 @@ el('recentBox').addEventListener('click', function(e){
 /* ---------- 主渲染 ---------- */
 function render(data){
   DATA = data;
+  if(!STATE.ym) STATE.ym = data.today.slice(0,7);
   var s = data.stats;
 
   el('kMonthLbl').textContent = data.monthLabel + '支出';
