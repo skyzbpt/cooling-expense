@@ -15,6 +15,7 @@ const CATEGORIES = {
   "其他": ["雜項支出", "員工請款", "零用金", "待歸類項目", "其他"],
 };
 const PAYMENTS = ["現金", "公司戶轉帳", "現金（零用金）", "信用卡（公司卡）", "信用卡（個人代墊）", "其他"];
+const HANDLERS = ["國鼎", "翁崇理", "陳睿騰", "王金水"];
 
 const TZ_OFFSET_MS = 8 * 60 * 60 * 1000; // 台灣 UTC+8：Worker 跑在 UTC，換算後才算得出正確的「今天」
 const DAY_MS = 86400000;
@@ -218,6 +219,7 @@ async function handleBootstrap(env) {
   return json({
     categories: CATEGORIES,
     payments: PAYMENTS,
+    handlers: HANDLERS,
     today: todayKey,
     monthLabel: Number(curMonth.slice(5, 7)) + "月",
     stats,
@@ -492,6 +494,8 @@ const INDEX_HTML = String.raw`<!DOCTYPE html>
   input[type="number"]::-webkit-outer-spin-button,
   input[type="number"]::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
   #amount,#e_amount{font-weight:600;font-variant-numeric:tabular-nums}
+  /* 經手人選「其他」時才會冒出來的自由輸入欄，跟上面的下拉選單隔開一點 */
+  .person-other{margin-top:8px}
   .btn-row{display:flex;gap:10px;margin-top:18px}
   button{font-family:inherit;font-size:15px;font-weight:600;cursor:pointer;border:none;border-radius:10px;
     padding:13px 18px;transition:opacity .15s,transform .1s,background .15s,color .15s}
@@ -708,7 +712,8 @@ const INDEX_HTML = String.raw`<!DOCTYPE html>
       <div><label>費用類別 <span class="req">*</span></label><select id="category"><option value="">請選擇</option></select></div>
       <div><label>品名 <span class="req">*</span></label><select id="item" disabled><option value="">先選類別</option></select></div>
       <div><label>支付方式</label><select id="payment"><option value="">未指定</option></select></div>
-      <div><label>經手人 / 代墊</label><input type="text" id="person" lang="zh-Hant" placeholder="例：阿明代墊"></div>
+      <div><label>經手人 / 代墊</label><select id="person"><option value="">未指定</option></select>
+        <input type="text" class="person-other" id="personOther" lang="zh-Hant" placeholder="輸入人名" hidden></div>
       <div class="full"><label>發票 / 備註</label><textarea id="note" lang="zh-Hant" rows="1" placeholder="發票號碼、工地名稱、其他說明"></textarea></div>
     </div>
     <div class="btn-row">
@@ -797,7 +802,8 @@ const INDEX_HTML = String.raw`<!DOCTYPE html>
       <div><label>費用類別 <span class="req">*</span></label><select id="e_category"></select></div>
       <div><label>品名 <span class="req">*</span></label><select id="e_item"></select></div>
       <div><label>支付方式</label><select id="e_payment"></select></div>
-      <div><label>經手人 / 代墊</label><input type="text" id="e_person" lang="zh-Hant"></div>
+      <div><label>經手人 / 代墊</label><select id="e_person"></select>
+        <input type="text" class="person-other" id="e_personOther" lang="zh-Hant" placeholder="輸入人名" hidden></div>
       <div class="full"><label>發票 / 備註</label><textarea id="e_note" lang="zh-Hant" rows="2"></textarea></div>
     </div>
     <div id="editMsg" class="modal-msg"></div>
@@ -1200,6 +1206,28 @@ function fillSelect(sel, values, current){
     sel.appendChild(o);
   });
 }
+/** 經手人下拉＋「其他」自由輸入的共用邏輯（新增表單、編輯 modal 各用一份） */
+function setPersonValue(selId, otherId, current){
+  var sel = el(selId), other = el(otherId);
+  var known = DATA.handlers.indexOf(current) >= 0;
+  if(current && !known){
+    sel.value = '其他'; other.hidden = false; other.value = current;
+  } else {
+    sel.value = known ? current : ''; other.hidden = true; other.value = '';
+  }
+}
+function getPersonValue(selId, otherId){
+  var sel = el(selId);
+  return sel.value === '其他' ? el(otherId).value.trim() : sel.value;
+}
+function bindPersonToggle(selId, otherId){
+  el(selId).addEventListener('change', function(){
+    var other = el(otherId);
+    if(this.value === '其他'){ other.hidden = false; other.focus(); }
+    else { other.hidden = true; other.value = ''; }
+  });
+}
+
 function syncEditItems(current){
   var cat = el('e_category').value;
   var items = (DATA.categories[cat] || []).slice();
@@ -1219,7 +1247,10 @@ function openEdit(id){
   syncEditItems(r.item);
   fillSelect(el('e_payment'), [''].concat(DATA.payments), r.payment || '');
   el('e_payment').options[0].textContent = '未指定';
-  el('e_person').value = r.person || '';
+  fillSelect(el('e_person'), [''].concat(DATA.handlers, ['其他']), '');
+  el('e_person').options[0].textContent = '未指定';
+  el('e_person').options[el('e_person').options.length - 1].textContent = '其他（自行輸入）';
+  setPersonValue('e_person', 'e_personOther', r.person || '');
   el('e_note').value = r.note || '';
   el('editMsg').className = 'modal-msg';
   el('editModal').hidden = false;
@@ -1228,6 +1259,7 @@ function openEdit(id){
 function closeEdit(){ el('editModal').hidden = true; editingId = null; }
 
 el('e_category').addEventListener('change', function(){ syncEditItems(''); });
+bindPersonToggle('e_person', 'e_personOther');
 el('editCancel').addEventListener('click', closeEdit);
 el('editModal').addEventListener('click', function(e){ if(e.target === this) closeEdit(); });
 document.addEventListener('keydown', function(e){
@@ -1237,7 +1269,7 @@ document.addEventListener('keydown', function(e){
 el('editSave').addEventListener('click', function(){
   var rec = { date: el('e_date').value, category: el('e_category').value, item: el('e_item').value,
     amount: el('e_amount').value, payment: el('e_payment').value,
-    person: el('e_person').value, note: el('e_note').value };
+    person: getPersonValue('e_person', 'e_personOther'), note: el('e_note').value };
   if(!rec.date || !rec.category || !rec.item || rec.amount === ''){
     var m = el('editMsg'); m.textContent = '日期、費用類別、品名、金額都要填。'; m.className = 'modal-msg on'; return;
   }
@@ -1313,6 +1345,12 @@ function render(data){
     data.payments.forEach(function(p){
       var o = document.createElement('option'); o.value=p; o.textContent=p; paySel.appendChild(o);
     });
+    var perSel = el('person');
+    data.handlers.forEach(function(h){
+      var o = document.createElement('option'); o.value=h; o.textContent=h; perSel.appendChild(o);
+    });
+    var oOpt = document.createElement('option'); oOpt.value='其他'; oOpt.textContent='其他（自行輸入）';
+    perSel.appendChild(oOpt);
   }
 
   renderTrend();
@@ -1356,9 +1394,12 @@ function showMsg(text, type){
   if(type === 'ok') setTimeout(function(){ m.className=''; }, 4000);
 }
 
+bindPersonToggle('person', 'personOther');
+
 el('saveBtn').addEventListener('click', function(){
   var rec = { date: el('date').value, category: el('category').value, item: el('item').value,
-    amount: el('amount').value, payment: el('payment').value, person: el('person').value, note: el('note').value };
+    amount: el('amount').value, payment: el('payment').value,
+    person: getPersonValue('person', 'personOther'), note: el('note').value };
   if(!rec.date || !rec.category || !rec.item || rec.amount === ''){ showMsg('日期、費用類別、品名、金額都要填。','err'); return; }
   var btn = this; btn.disabled = true; btn.textContent = '儲存中…';
   fetch('/api/expenses', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(rec) })
@@ -1367,7 +1408,8 @@ el('saveBtn').addEventListener('click', function(){
       if(!res.ok){ throw new Error(res.data.error || '儲存失敗'); }
       render(res.data);
       el('search').value = ''; el('listSub').textContent = '最新 50 筆，可直接編輯或刪除';
-      el('amount').value=''; el('person').value=''; el('note').value=''; el('date').value = res.data.today;
+      el('amount').value=''; el('person').value=''; el('personOther').hidden=true; el('personOther').value='';
+      el('note').value=''; el('date').value = res.data.today;
       showMsg('已存入：' + rec.category + ' / ' + rec.item + ' / NT$' + nf0(rec.amount), 'ok');
       el('amount').focus();
     })
