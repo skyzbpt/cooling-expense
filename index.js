@@ -713,8 +713,8 @@ const INDEX_HTML = String.raw`<!DOCTYPE html>
       <div><label>品名 <span class="req">*</span></label><select id="item" disabled><option value="">先選類別</option></select></div>
       <div><label>支付方式</label><select id="payment"><option value="">未指定</option></select></div>
       <div><label>經手人 / 代墊</label><select id="person"><option value="">未指定</option></select>
-        <input type="text" class="person-other" id="personOther" lang="zh-Hant" placeholder="輸入人名" hidden></div>
-      <div class="full"><label>發票 / 備註</label><textarea id="note" lang="zh-Hant" rows="1" placeholder="發票號碼、工地名稱、其他說明"></textarea></div>
+        <input type="text" class="person-other" id="personOther" lang="zh-Hant" autocomplete="off" placeholder="輸入人名" hidden></div>
+      <div class="full"><label>發票 / 備註</label><textarea id="note" lang="zh-Hant" autocomplete="off" rows="1" placeholder="發票號碼、工地名稱、其他說明"></textarea></div>
     </div>
     <div class="btn-row">
       <button class="primary" id="saveBtn">儲存這筆</button>
@@ -783,7 +783,7 @@ const INDEX_HTML = String.raw`<!DOCTYPE html>
         <div class="sub" id="listSub">最新 50 筆，可直接編輯或刪除</div>
       </div>
       <div class="head-tools">
-        <input type="search" id="search" class="search" lang="zh-Hant" placeholder="搜尋品名、經手人、備註、日期…">
+        <input type="text" id="search" class="search" lang="zh-Hant" autocomplete="off" placeholder="搜尋品名、經手人、備註、日期…">
         <a class="export" href="/api/export.csv">↓ 下載 CSV</a>
       </div>
     </div>
@@ -803,8 +803,8 @@ const INDEX_HTML = String.raw`<!DOCTYPE html>
       <div><label>品名 <span class="req">*</span></label><select id="e_item"></select></div>
       <div><label>支付方式</label><select id="e_payment"></select></div>
       <div><label>經手人 / 代墊</label><select id="e_person"></select>
-        <input type="text" class="person-other" id="e_personOther" lang="zh-Hant" placeholder="輸入人名" hidden></div>
-      <div class="full"><label>發票 / 備註</label><textarea id="e_note" lang="zh-Hant" rows="2"></textarea></div>
+        <input type="text" class="person-other" id="e_personOther" lang="zh-Hant" autocomplete="off" placeholder="輸入人名" hidden></div>
+      <div class="full"><label>發票 / 備註</label><textarea id="e_note" lang="zh-Hant" autocomplete="off" rows="2"></textarea></div>
     </div>
     <div id="editMsg" class="modal-msg"></div>
     <div class="btn-row">
