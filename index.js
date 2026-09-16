@@ -21,7 +21,6 @@ const TZ_OFFSET_MS = 8 * 60 * 60 * 1000; // 台灣 UTC+8：Worker 跑在 UTC，�
 const DAY_MS = 86400000;
 const TREND_DAYS = 30;
 const TREND_MONTHS = 12;
-const HEAT_WEEKS = 53; // 送一整年，前端再照卡片寬度決定實際畫幾週
 
 function taipeiNow() {
   return new Date(Date.now() + TZ_OFFSET_MS);
@@ -179,15 +178,6 @@ async function handleBootstrap(env) {
     .sort()
     .map((k) => ({ key: k, total: yearAgg[k] }));
 
-  // 熱力圖：往回推 16 週，並對齊到星期日開頭
-  let heatStart = new Date(now.getTime() - (HEAT_WEEKS * 7 - 1) * DAY_MS);
-  heatStart = new Date(heatStart.getTime() - heatStart.getUTCDay() * DAY_MS);
-  const heat = [];
-  for (let t = heatStart.getTime(); t <= now.getTime(); t += DAY_MS) {
-    const k = dayKey(new Date(t));
-    heat.push({ key: k, total: dayAgg[k] || 0 });
-  }
-
   const prevMonthTotal = monthAgg[prevMonth] || 0;
   const daysElapsed = Number(todayKey.slice(8, 10));
   const stats = {
@@ -236,7 +226,6 @@ async function handleBootstrap(env) {
         ? String(results[results.length - 1].date).slice(0, 7)
         : curMonth,
     },
-    heat,
     recent,
   });
 }
@@ -333,22 +322,39 @@ async function handleDelete(id, env) {
   return handleBootstrap(env);
 }
 
+/**
+ * 全形轉半形後再比對。中文輸入法在全形標點模式下打出來的是「／」(U+FF0F)、
+ * 「（）」、「２０２６」，跟資料庫裡存的半形字不是同一個字元，直接比對會搜不到。
+ * 查詢字串與資料兩邊都套同一套正規化，才不會出現「打得出來卻搜不到」。
+ * 注意：支付方式本來就刻意用全形括號（信用卡（公司卡）），所以只正規化查詢字串
+ * 會反而害那組搜不到，兩邊都要一起轉。
+ */
+function foldText(s) {
+  return String(s ?? "")
+    .replace(/[！-～]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0))
+    .replace(/　/g, " ")
+    .toLowerCase();
+}
+
 /** 搜尋全部歷史紀錄，讓舊資料也編輯得到（最近紀錄只列最新 50 筆） */
 async function handleSearch(url, env) {
-  const q = (url.searchParams.get("q") || "").trim();
-  if (!q) return json({ rows: [] });
-  const like = "%" + q + "%";
+  const raw = (url.searchParams.get("q") || "").trim();
+  if (!raw) return json({ rows: [] });
+  const q = foldText(raw);
+
   const { results } = await env.DB.prepare(
     `SELECT id, date, category, item, amount, payment, person, note FROM expenses
-     WHERE item LIKE ? OR category LIKE ? OR person LIKE ? OR note LIKE ?
-        OR payment LIKE ? OR date LIKE ?
-     ORDER BY date DESC, id DESC LIMIT 100`
-  )
-    .bind(like, like, like, like, like, like)
-    .all();
+     ORDER BY date DESC, id DESC`
+  ).all();
 
-  return json({
-    rows: results.map((r) => ({
+  const rows = [];
+  for (const r of results) {
+    //   當分隔字元，避免跨欄位湊出假的命中
+    const hay = foldText(
+      [r.item, r.category, r.person, r.note, r.payment, r.date].join(" ")
+    );
+    if (!hay.includes(q)) continue;
+    rows.push({
       id: r.id,
       date: String(r.date || "").slice(0, 10),
       category: r.category,
@@ -357,8 +363,11 @@ async function handleSearch(url, env) {
       payment: r.payment,
       person: r.person,
       note: r.note,
-    })),
-  });
+    });
+    if (rows.length >= 100) break;
+  }
+
+  return json({ rows });
 }
 
 async function handleExportCsv(env) {
@@ -408,8 +417,6 @@ const INDEX_HTML = String.raw`<!DOCTYPE html>
     --ink:#16323D; --ink-2:#3E5D6B; --muted:#6B8794;
     --line:#D6E9F3; --grid:#E8F1F6; --axis:#C3D8E3;
     --accent:#2E86AB; --accent-deep:#1B5E7A; --track:#EAF4F9;
-    --heat-0:#7EB8D2; --heat-1:#4E9CBE; --heat-2:#2E86AB; --heat-3:#1B5E7A;
-    --heat-empty:#EEF4F7;
     --good:#1E6E43; --danger:#A6402A; --amber:#E8963C;
     --shadow:0 1px 3px rgba(46,134,171,.07);
     --ctl-h:40px;   /* 表單欄位統一高度，以下拉選單的原生高度為準 */
@@ -422,8 +429,6 @@ const INDEX_HTML = String.raw`<!DOCTYPE html>
       --ink:#E9F2F7; --ink-2:#B7CCD7; --muted:#8FA9B5;
       --line:#26343D; --grid:#1F2C34; --axis:#2C3D47;
       --accent:#3D9AC0; --accent-deep:#6FBBD6; --track:#1E2C35;
-      --heat-0:#245F79; --heat-1:#2B7DA0; --heat-2:#3D9AC0; --heat-3:#6FBBD6;
-      --heat-empty:#1A252C;
       --good:#4FBF85; --danger:#E8907A; --amber:#E8A65C;
       --shadow:0 1px 3px rgba(0,0,0,.3);
       --tip-bg:#E9F2F7; --tip-ink:#0F171B;
@@ -577,23 +582,6 @@ const INDEX_HTML = String.raw`<!DOCTYPE html>
   .panes{display:grid;grid-template-columns:1fr 1fr;gap:24px 28px}
   .pane h3{font-size:12.5px;font-weight:700;color:var(--muted);letter-spacing:.04em;margin-bottom:13px}
   .pane.wide{grid-column:1/-1}
-
-  /* ---- 熱力圖 ---- */
-  /* 週數由 JS 依卡片寬度算出，格子用 1fr 撐滿，所以熱力圖永遠剛好等於卡片寬度 */
-  .heat-inner{width:100%}
-  .heat-body{display:flex;gap:5px;align-items:stretch}
-  .heat-wd{display:grid;grid-template-rows:repeat(7,1fr);gap:3px;padding-top:18px;flex:none;width:14px}
-  .heat-wd span{font-size:9.5px;color:var(--muted);display:flex;align-items:center;line-height:1}
-  .heat-cols{flex:1;min-width:0}
-  .heat-months{display:grid;grid-auto-flow:column;gap:3px;height:13px;margin-bottom:5px}
-  .heat-months span{font-size:10px;line-height:13px;color:var(--muted);white-space:nowrap}
-  .heat-grid{display:grid;grid-auto-flow:column;grid-template-rows:repeat(7,1fr);gap:3px}
-  .hc{display:block;aspect-ratio:1/1;border-radius:3px;background:var(--heat-empty)}
-  .hc.l0{background:var(--heat-0)} .hc.l1{background:var(--heat-1)}
-  .hc.l2{background:var(--heat-2)} .hc.l3{background:var(--heat-3)}
-  .hc.pad{background:transparent}
-  .heat-legend{display:flex;align-items:center;gap:5px;justify-content:flex-end;margin-top:11px;font-size:11px;color:var(--muted)}
-  .heat-legend i{width:11px;height:11px;border-radius:3px;display:block}
 
   /* ---- 表格 ---- */
   table{width:100%;border-collapse:collapse;font-size:13px}
@@ -764,16 +752,6 @@ const INDEX_HTML = String.raw`<!DOCTYPE html>
       <div class="pane"><h3>支付方式</h3><div id="payBox"><div class="loading">載入中…</div></div></div>
       <div class="pane wide"><h3>經手人 / 代墊<span class="hint" id="personHint"></span></h3><div id="personBox"><div class="loading">載入中…</div></div></div>
     </div>
-  </div>
-
-  <div class="card">
-    <div class="card-head">
-      <div>
-        <h2>每日支出熱力圖</h2>
-        <div class="sub" id="heatSub">顏色越深當天花越多</div>
-      </div>
-    </div>
-    <div id="heatBox"><div class="loading">載入中…</div></div>
   </div>
 
   <div class="card">
@@ -1082,68 +1060,6 @@ el('personBox').addEventListener('click', function(e){
   row.classList.toggle('open', !detail.hidden);
 });
 
-/* ---------- 熱力圖 ---------- */
-var HEAT_WD_W = 14, HEAT_GAP = 3, HEAT_CELL = 15;   // 標籤欄寬、格子間距、理想格子邊長
-
-/** 卡片有多寬就畫多少週，格子維持在順眼的大小，不留空白也不用左右捲 */
-function heatWeeksFor(width){
-  var usable = width - HEAT_WD_W - 5;                       // 5 是 heat-body 的 gap
-  var n = Math.round((usable + HEAT_GAP) / (HEAT_CELL + HEAT_GAP));
-  return Math.max(8, Math.min(53, n));
-}
-
-function renderHeat(){
-  var box = el('heatBox'), days = DATA.heat || [];
-  if(!days.length){ box.innerHTML = '<div class="empty">還沒有資料</div>'; return; }
-
-  // 只留最後 N 週，且切在星期日，列才不會錯位
-  var want = heatWeeksFor(box.clientWidth || 906);
-  var lead0 = new Date(days[0].key + 'T00:00:00Z').getUTCDay();
-  var have = Math.ceil((lead0 + days.length) / 7);
-  if(want < have) days = days.slice(Math.max(0, (have - want) * 7 - lead0));
-
-  var vals = days.filter(function(d){ return d.total > 0; })
-    .map(function(d){ return d.total; }).sort(function(a,b){ return a-b; });
-  function q(p){ return vals.length ? vals[Math.min(vals.length-1, Math.floor(vals.length*p))] : 0; }
-  var e1 = q(0.25), e2 = q(0.5), e3 = q(0.75);
-  function lvl(v){ if(v <= 0) return ''; if(v <= e1) return ' l0'; if(v <= e2) return ' l1'; if(v <= e3) return ' l2'; return ' l3'; }
-
-  // 補滿第一週開頭的空格，讓每一列都對應同一個星期幾
-  var lead = new Date(days[0].key + 'T00:00:00Z').getUTCDay();
-  var cells = '';
-  for(var i=0;i<lead;i++) cells += '<i class="hc pad"></i>';
-  days.forEach(function(d){
-    cells += '<i class="hc' + lvl(d.total) + '" data-k="' + esc(fmtDayFull(d.key))
-      + '" data-v="' + nf0(d.total) + '"></i>';
-  });
-
-  // 月份標籤：每一欄（週）如果跨入新的月份就標上
-  var weeks = Math.ceil((lead + days.length)/7), months = '', last = '';
-  for(var w=0; w<weeks; w++){
-    var idx = w*7 - lead, label = '';
-    for(var k=Math.max(0,idx); k<Math.min(days.length, idx+7); k++){
-      var mo = days[k].key.slice(0,7);
-      if(mo !== last){ label = Number(mo.slice(5,7)) + '月'; last = mo; break; }
-    }
-    months += '<span>' + label + '</span>';
-  }
-
-  var wd = ['日','','','三','','','六']
-    .map(function(w){ return '<span>' + w + '</span>'; }).join('');
-
-  box.innerHTML = '<div class="heat-inner">'
-    + '<div class="heat-body"><div class="heat-wd">' + wd + '</div><div class="heat-cols">'
-    + '<div class="heat-months" style="grid-template-columns:repeat(' + weeks + ',1fr)">' + months + '</div>'
-    + '<div class="heat-grid" style="grid-template-columns:repeat(' + weeks + ',1fr)">' + cells + '</div>'
-    + '</div></div>'
-    + '<div class="heat-legend">少<i class="hc"></i><i class="hc l0"></i><i class="hc l1"></i>'
-    + '<i class="hc l2"></i><i class="hc l3"></i>多</div>'
-    + '</div>';
-
-  var sub = el('heatSub');
-  if(sub) sub.textContent = '最近 ' + weeks + ' 週，顏色越深當天花越多';
-}
-
 /* ---------- 紀錄明細（可編輯／刪除） ---------- */
 var ROWS = {};   // id -> 紀錄，編輯時直接取用
 
@@ -1355,7 +1271,6 @@ function render(data){
 
   renderTrend();
   renderBreakdown();
-  renderHeat();
   renderRecent(data.recent);
 }
 
@@ -1417,21 +1332,10 @@ el('saveBtn').addEventListener('click', function(){
     .finally(function(){ btn.disabled=false; btn.textContent='儲存這筆'; });
 });
 
-/* 視窗寬度變了就重算週數，熱力圖才會一直貼齊卡片 */
-var heatTimer = null, heatW = 0;
-window.addEventListener('resize', function(){
-  if(!DATA) return;
-  var w = el('heatBox').clientWidth;
-  if(heatWeeksFor(w) === heatWeeksFor(heatW)) return;
-  heatW = w;
-  clearTimeout(heatTimer);
-  heatTimer = setTimeout(renderHeat, 120);
-});
-
 fetch('/api/bootstrap').then(function(r){ return r.json(); })
   .then(function(d){ render(d); if(!el('date').value) el('date').value = d.today; })
   .catch(function(err){
-    ['trendBox','catBox','payBox','personBox','heatBox','recentBox'].forEach(function(id){
+    ['trendBox','catBox','payBox','personBox','recentBox'].forEach(function(id){
       el(id).innerHTML = '<div class="empty">載入失敗：' + esc(err.message) + '</div>';
     });
   });
