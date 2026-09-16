@@ -11,7 +11,8 @@ const CATEGORIES = {
   "車輛與交通": ["加油費", "停車費", "過路費", "其他"],
   "工具與設備": ["其他"],
   "人力與點工": ["冷氣點工", "水電點工", "木工點工", "其他"],
-  "公司固定開銷": ["餐費", "薪資", "勞健保", "車子分期", "會計費用", "其他"],
+  "公司固定開銷": ["薪資", "勞健保", "車子分期", "會計費用", "其他"],
+  "餐費": ["餐費", "其他"],
   "其他": ["雜項支出", "員工請款", "零用金", "待歸類項目", "其他"],
 };
 const PAYMENTS = ["現金", "公司戶轉帳", "現金（零用金）", "信用卡（公司卡）", "信用卡（個人代墊）", "其他"];
@@ -23,9 +24,19 @@ const HANDLERS = ["國鼎", "翁崇理", "陳睿騰", "王金水"];
  * 舊紀錄被編輯儲存時也會自然寫回新名稱，資料等於慢慢遷移過去。
  */
 const CATEGORY_RENAMES = { "公司固定雜支": "公司固定開銷" };
-function catName(c) {
-  const s = String(c || "");
-  return CATEGORY_RENAMES[s] || s;
+
+/**
+ * 品名獨立成類別：餐費本來是「公司固定開銷」底下的一個品名，現在自成一類。
+ * 舊紀錄的類別欄還是寫著「公司固定開銷」，讀出來時依品名歸到新類別，報表才會
+ * 立刻分開；這些紀錄被編輯儲存時也會自然寫回新類別。
+ */
+const ITEM_TO_CATEGORY = { "餐費": { from: "公司固定開銷", to: "餐費" } };
+
+function catName(category, item) {
+  const s = String(category || "");
+  const c = CATEGORY_RENAMES[s] || s;
+  const move = ITEM_TO_CATEGORY[String(item || "")];
+  return move && move.from === c ? move.to : c;
 }
 
 const TZ_OFFSET_MS = 8 * 60 * 60 * 1000; // 台灣 UTC+8：Worker 跑在 UTC，換算後才算得出正確的「今天」
@@ -120,7 +131,7 @@ function bump(map, key, amt) {
 function addTo(scope, row, amt) {
   scope.total += amt;
   scope.count += 1;
-  bump(scope.cat, catName(row.category) || "未分類", amt);
+  bump(scope.cat, catName(row.category, row.item) || "未分類", amt);
   bump(scope.pay, String(row.payment || "").trim() || "未指定", amt);
   bump(scope.person, String(row.person || "").trim() || "未填", amt);
 }
@@ -209,7 +220,7 @@ async function handleBootstrap(env) {
     .map((r) => ({
       id: r.id,
       date: String(r.date || "").slice(0, 10),
-      category: catName(r.category),
+      category: catName(r.category, r.item),
       item: r.item,
       amount: r.amount,
       payment: r.payment,
@@ -258,7 +269,7 @@ async function handleMonthScope(url, env) {
   const rows = results.map((r) => ({
     id: r.id,
     date: String(r.date || "").slice(0, 10),
-    category: catName(r.category),
+    category: catName(r.category, r.item),
     item: r.item,
     amount: r.amount,
     payment: r.payment,
@@ -362,13 +373,13 @@ async function handleSearch(url, env) {
   for (const r of results) {
     //   當分隔字元，避免跨欄位湊出假的命中
     const hay = foldText(
-      [r.item, catName(r.category), r.person, r.note, r.payment, r.date].join(" ")
+      [r.item, catName(r.category, r.item), r.person, r.note, r.payment, r.date].join(" ")
     );
     if (!hay.includes(q)) continue;
     rows.push({
       id: r.id,
       date: String(r.date || "").slice(0, 10),
-      category: catName(r.category),
+      category: catName(r.category, r.item),
       item: r.item,
       amount: r.amount,
       payment: r.payment,
@@ -390,7 +401,7 @@ async function handleExportCsv(env) {
   const lines = [headers.map(csvEscape).join(",")];
   for (const r of results) {
     lines.push(
-      [r.date, catName(r.category), r.item, r.amount, r.payment, r.person, r.note]
+      [r.date, catName(r.category, r.item), r.item, r.amount, r.payment, r.person, r.note]
         .map(csvEscape)
         .join(",")
     );
