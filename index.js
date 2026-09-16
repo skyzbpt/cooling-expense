@@ -18,6 +18,9 @@ const CATEGORIES = {
 const PAYMENTS = ["現金", "公司戶轉帳", "現金（零用金）", "信用卡（公司卡）", "信用卡（個人代墊）", "其他"];
 const HANDLERS = ["國鼎", "翁崇理", "陳睿騰", "王金水"];
 
+/** 選到這些類別時，品名直接帶入預設值，不必再選一次（還是可以改成別的品名） */
+const DEFAULT_ITEMS = { "餐費": "餐費" };
+
 /**
  * 類別改名對照表：資料庫裡的舊紀錄還是存著舊名稱，若不轉換，報表會拆成
  * 兩個類別（舊名一列、新名一列）。讀出來時統一換成新名，畫面與統計才會合併；
@@ -232,6 +235,7 @@ async function handleBootstrap(env) {
     categories: CATEGORIES,
     payments: PAYMENTS,
     handlers: HANDLERS,
+    defaultItems: DEFAULT_ITEMS,
     today: todayKey,
     monthLabel: Number(curMonth.slice(5, 7)) + "月",
     stats,
@@ -1171,7 +1175,9 @@ function syncEditItems(current){
   var items = (DATA.categories[cat] || []).slice();
   // 舊資料的品名可能已經不在目前的清單裡，保留它才不會一存就被改掉
   if(current && items.indexOf(current) < 0) items.unshift(current);
-  fillSelect(el('e_item'), items, current);
+  // 沒有既有品名時（例如剛改類別），有預設品名的類別直接帶入
+  var pick = current || (DATA.defaultItems || {})[cat] || '';
+  fillSelect(el('e_item'), items, pick);
 }
 
 var editingId = null;
@@ -1328,6 +1334,9 @@ el('category').addEventListener('change', function(){
     var o=document.createElement('option'); o.value=i; o.textContent=i; itemSel.appendChild(o);
   });
   if(DATA.categories[cat].length === 1) itemSel.value = DATA.categories[cat][0];
+  // 像「餐費」這種類別，品名就是同一個名字，直接帶進去省一次點選
+  var def = (DATA.defaultItems || {})[cat];
+  if(def && DATA.categories[cat].indexOf(def) >= 0) itemSel.value = def;
 });
 
 function showMsg(text, type){
