@@ -11,11 +11,22 @@ const CATEGORIES = {
   "車輛與交通": ["加油費", "停車費", "過路費", "其他"],
   "工具與設備": ["其他"],
   "人力與點工": ["冷氣點工", "水電點工", "木工點工", "其他"],
-  "公司固定雜支": ["餐費", "薪資", "勞健保", "車子分期", "會計費用", "其他"],
+  "公司固定開銷": ["餐費", "薪資", "勞健保", "車子分期", "會計費用", "其他"],
   "其他": ["雜項支出", "員工請款", "零用金", "待歸類項目", "其他"],
 };
 const PAYMENTS = ["現金", "公司戶轉帳", "現金（零用金）", "信用卡（公司卡）", "信用卡（個人代墊）", "其他"];
 const HANDLERS = ["國鼎", "翁崇理", "陳睿騰", "王金水"];
+
+/**
+ * 類別改名對照表：資料庫裡的舊紀錄還是存著舊名稱，若不轉換，報表會拆成
+ * 兩個類別（舊名一列、新名一列）。讀出來時統一換成新名，畫面與統計才會合併；
+ * 舊紀錄被編輯儲存時也會自然寫回新名稱，資料等於慢慢遷移過去。
+ */
+const CATEGORY_RENAMES = { "公司固定雜支": "公司固定開銷" };
+function catName(c) {
+  const s = String(c || "");
+  return CATEGORY_RENAMES[s] || s;
+}
 
 const TZ_OFFSET_MS = 8 * 60 * 60 * 1000; // 台灣 UTC+8：Worker 跑在 UTC，換算後才算得出正確的「今天」
 const DAY_MS = 86400000;
@@ -109,7 +120,7 @@ function bump(map, key, amt) {
 function addTo(scope, row, amt) {
   scope.total += amt;
   scope.count += 1;
-  bump(scope.cat, row.category || "未分類", amt);
+  bump(scope.cat, catName(row.category) || "未分類", amt);
   bump(scope.pay, String(row.payment || "").trim() || "未指定", amt);
   bump(scope.person, String(row.person || "").trim() || "未填", amt);
 }
@@ -198,7 +209,7 @@ async function handleBootstrap(env) {
     .map((r) => ({
       id: r.id,
       date: String(r.date || "").slice(0, 10),
-      category: r.category,
+      category: catName(r.category),
       item: r.item,
       amount: r.amount,
       payment: r.payment,
@@ -247,7 +258,7 @@ async function handleMonthScope(url, env) {
   const rows = results.map((r) => ({
     id: r.id,
     date: String(r.date || "").slice(0, 10),
-    category: r.category,
+    category: catName(r.category),
     item: r.item,
     amount: r.amount,
     payment: r.payment,
@@ -351,13 +362,13 @@ async function handleSearch(url, env) {
   for (const r of results) {
     //   當分隔字元，避免跨欄位湊出假的命中
     const hay = foldText(
-      [r.item, r.category, r.person, r.note, r.payment, r.date].join(" ")
+      [r.item, catName(r.category), r.person, r.note, r.payment, r.date].join(" ")
     );
     if (!hay.includes(q)) continue;
     rows.push({
       id: r.id,
       date: String(r.date || "").slice(0, 10),
-      category: r.category,
+      category: catName(r.category),
       item: r.item,
       amount: r.amount,
       payment: r.payment,
@@ -379,7 +390,7 @@ async function handleExportCsv(env) {
   const lines = [headers.map(csvEscape).join(",")];
   for (const r of results) {
     lines.push(
-      [r.date, r.category, r.item, r.amount, r.payment, r.person, r.note]
+      [r.date, catName(r.category), r.item, r.amount, r.payment, r.person, r.note]
         .map(csvEscape)
         .join(",")
     );
@@ -1159,7 +1170,11 @@ function openEdit(id){
   editingId = id;
   el('e_date').value = r.date;
   el('e_amount').value = r.amount;
-  fillSelect(el('e_category'), Object.keys(DATA.categories), r.category);
+  // 類別同理：舊資料的類別若已不在清單裡，要保留它，否則下拉會自動落在第一個
+  // 選項，使用者只是改個金額就會把類別默默改掉
+  var cats = Object.keys(DATA.categories);
+  if(r.category && cats.indexOf(r.category) < 0) cats.unshift(r.category);
+  fillSelect(el('e_category'), cats, r.category);
   syncEditItems(r.item);
   fillSelect(el('e_payment'), [''].concat(DATA.payments), r.payment || '');
   el('e_payment').options[0].textContent = '未指定';
