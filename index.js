@@ -362,6 +362,22 @@ function foldText(s) {
     .toLowerCase();
 }
 
+/**
+ * 明細列表上的日期顯示成「9/16」，資料庫存的卻是「2026-09-16」，使用者照著
+ * 畫面上看到的打就搜不到。把常見的幾種寫法都放進比對字串，斜線、破折號、
+ * 有沒有補零、中文的「9月16日」都能搜。
+ */
+function dateVariants(d) {
+  const s = String(d || "").slice(0, 10);
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return [s];
+  const y = m[1], mo = m[2], da = m[3];
+  const M = String(Number(mo)), D = String(Number(da));
+  return [s, y + "/" + mo + "/" + da, y + "/" + M + "/" + D, y + "-" + M + "-" + D,
+    mo + "/" + da, M + "/" + D, M + "-" + D,
+    y + "年" + M + "月" + D + "日", M + "月" + D + "日"];
+}
+
 /** 搜尋全部歷史紀錄，讓舊資料也編輯得到（最近紀錄只列最新 50 筆） */
 async function handleSearch(url, env) {
   const raw = (url.searchParams.get("q") || "").trim();
@@ -375,9 +391,10 @@ async function handleSearch(url, env) {
 
   const rows = [];
   for (const r of results) {
-    //   當分隔字元，避免跨欄位湊出假的命中
+    // \u0000 當分隔字元，避免跨欄位湊出假的命中
     const hay = foldText(
-      [r.item, catName(r.category, r.item), r.person, r.note, r.payment, r.date].join(" ")
+      [r.item, catName(r.category, r.item), r.person, r.note, r.payment]
+        .concat(dateVariants(r.date)).join("\u0000")
     );
     if (!hay.includes(q)) continue;
     rows.push({
@@ -724,7 +741,7 @@ const INDEX_HTML = String.raw`<!DOCTYPE html>
       <div><label>日期 <span class="req">*</span></label><input type="date" id="date"></div>
       <div><label>金額 <span class="req">*</span></label><input type="number" id="amount" inputmode="decimal" step="0.01" placeholder="0"></div>
       <div><label>費用類別 <span class="req">*</span></label><select id="category"><option value="">請選擇</option></select></div>
-      <div><label>品名 <span class="req">*</span></label><select id="item" disabled><option value="">先選類別</option></select></div>
+      <div id="itemField"><label>品名 <span class="req">*</span></label><select id="item" disabled><option value="">先選類別</option></select></div>
       <div><label>支付方式</label><select id="payment"><option value="">未指定</option></select></div>
       <div><label>經手人 / 代墊</label><select id="person"><option value="">未指定</option></select>
         <input type="text" class="person-other" id="personOther" lang="zh-Hant" autocomplete="off" placeholder="輸入人名" hidden></div>
@@ -804,7 +821,7 @@ const INDEX_HTML = String.raw`<!DOCTYPE html>
       <div><label>日期 <span class="req">*</span></label><input type="date" id="e_date"></div>
       <div><label>金額 <span class="req">*</span></label><input type="number" id="e_amount" inputmode="decimal" step="0.01"></div>
       <div><label>費用類別 <span class="req">*</span></label><select id="e_category"></select></div>
-      <div><label>品名 <span class="req">*</span></label><select id="e_item"></select></div>
+      <div id="e_itemField"><label>品名 <span class="req">*</span></label><select id="e_item"></select></div>
       <div><label>支付方式</label><select id="e_payment"></select></div>
       <div><label>經手人 / 代墊</label><select id="e_person"></select>
         <input type="text" class="person-other" id="e_personOther" lang="zh-Hant" autocomplete="off" placeholder="輸入人名" hidden></div>
@@ -1175,9 +1192,13 @@ function syncEditItems(current){
   var items = (DATA.categories[cat] || []).slice();
   // 舊資料的品名可能已經不在目前的清單裡，保留它才不會一存就被改掉
   if(current && items.indexOf(current) < 0) items.unshift(current);
-  // 沒有既有品名時（例如剛改類別），有預設品名的類別直接帶入
-  var pick = current || (DATA.defaultItems || {})[cat] || '';
+  // 沒有既有品名時（例如剛改類別），有預設品名的類別直接帶入並把欄位收起來
+  var def = (DATA.defaultItems || {})[cat];
+  var use = def && (DATA.categories[cat] || []).indexOf(def) >= 0;
+  var pick = current || (use ? def : '');
   fillSelect(el('e_item'), items, pick);
+  // 舊資料的品名若跟預設不同（例如餐費類別底下存的是「其他」），還是要讓使用者看得到
+  el('e_itemField').hidden = !!use && pick === def;
 }
 
 var editingId = null;
@@ -1334,9 +1355,11 @@ el('category').addEventListener('change', function(){
     var o=document.createElement('option'); o.value=i; o.textContent=i; itemSel.appendChild(o);
   });
   if(DATA.categories[cat].length === 1) itemSel.value = DATA.categories[cat][0];
-  // 像「餐費」這種類別，品名就是同一個名字，直接帶進去省一次點選
+  // 像「餐費」這種類別，品名就是同一個名字，直接帶進去並把整個欄位收起來
   var def = (DATA.defaultItems || {})[cat];
-  if(def && DATA.categories[cat].indexOf(def) >= 0) itemSel.value = def;
+  var use = def && DATA.categories[cat].indexOf(def) >= 0;
+  if(use) itemSel.value = def;
+  el('itemField').hidden = !!use;
 });
 
 function showMsg(text, type){
