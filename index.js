@@ -615,6 +615,14 @@ const INDEX_HTML = String.raw`<!DOCTYPE html>
 
   /* ---- 橫向長條清單 ---- */
   .bl{display:flex;flex-direction:column;gap:10px}
+  /* 可展開的類別：整列（列＋明細）綁在一起，才不會被 .bl 的 gap 拆散 */
+  .bl-group{display:flex;flex-direction:column;gap:8px}
+  .bl-clickable{cursor:pointer;border-radius:7px;margin:-4px -6px;padding:4px 6px}
+  .bl-clickable:hover{background:var(--raise)}
+  .bl-name .chev{margin-right:4px}
+  .bl-clickable.open .chev{transform:rotate(90deg);color:var(--accent)}
+  .bl-clickable.open .bl-name{color:var(--ink);font-weight:600}
+  .bl-detail{padding-bottom:4px}
   /* 名稱欄要放得下最長的「信用卡（個人代墊）」9 個字，否則會被截成「信用卡（個人…」 */
   .bl-row{display:grid;grid-template-columns:118px 1fr 74px 42px;align-items:center;gap:10px;font-size:12.5px}
   .bl-name{color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -791,7 +799,7 @@ const INDEX_HTML = String.raw`<!DOCTYPE html>
       </div>
     </div>
     <div class="panes">
-      <div class="pane"><h3>費用類別</h3><div id="catBox"><div class="loading">載入中…</div></div></div>
+      <div class="pane"><h3>費用類別<span class="hint" id="catHint"></span></h3><div id="catBox"><div class="loading">載入中…</div></div></div>
       <div class="pane"><h3>支付方式</h3><div id="payBox"><div class="loading">載入中…</div></div></div>
       <div class="pane wide"><h3>經手人 / 代墊<span class="hint" id="personHint"></span></h3><div id="personBox"><div class="loading">載入中…</div></div></div>
     </div>
@@ -957,16 +965,43 @@ function renderTrend(){
 }
 
 /* ---------- 橫向長條清單 ---------- */
-function barList(rows, unitFmt){
+/** 逐筆明細清單，經手人與費用類別的下拉明細共用 */
+function txList(list, metaFn, emptyText){
+  if(!list || !list.length) return '<div class="empty" style="padding:8px 0">' + esc(emptyText) + '</div>';
+  return '<div class="pt-list">' + list.map(function(t){
+    return '<div class="pt-item"><span class="pt-date">' + esc(fmtDay(t.date)) + '</span>'
+      + '<span class="pt-name">' + esc(t.item) + '</span>'
+      + '<span class="pt-meta">' + esc(metaFn(t)) + '</span>'
+      + '<span class="pt-amt">NT$ ' + nf0(t.amount) + '</span></div>';
+  }).join('') + '</div>';
+}
+function groupBy(rows, keyFn){
+  var out = {};
+  (rows || []).forEach(function(t){ var k = keyFn(t); (out[k] = out[k] || []).push(t); });
+  return out;
+}
+
+/** txByCat 有值時（月度明細模式）每一列可以點開看逐筆支出 */
+function barList(rows, txByCat){
   if(!rows || !rows.length) return '<div class="empty">這段期間還沒有紀錄</div>';
   var max = rows[0].total || 1;
-  return '<div class="bl">' + rows.map(function(r){
+  var canExpand = !!txByCat;
+  return '<div class="bl">' + rows.map(function(r, idx){
     var w = Math.max(2, (r.total/max)*100);
-    return '<div class="bl-row" data-k="' + esc(r.name) + '（' + r.count + ' 筆）" data-v="' + nf0(r.total) + '">'
-      + '<div class="bl-name">' + esc(r.name) + '</div>'
+    var chev = canExpand ? '<span class="chev">▸</span>' : '';
+    var row = '<div class="bl-row' + (canExpand ? ' bl-clickable' : '') + '" data-idx="' + idx + '"'
+      + ' data-k="' + esc(r.name) + '（' + r.count + ' 筆）" data-v="' + nf0(r.total) + '">'
+      + '<div class="bl-name">' + chev + esc(r.name) + '</div>'
       + '<div class="bl-track"><div class="bl-fill" style="width:' + w + '%"></div></div>'
       + '<div class="bl-val">' + nf0(r.total) + '</div>'
       + '<div class="bl-pct">' + r.pct.toFixed(0) + '%</div></div>';
+    if(!canExpand) return row;
+    var detail = '<div class="bl-detail" id="cd-' + idx + '" hidden>'
+      + txList(txByCat[r.name], function(t){
+          return (t.payment || '未指定') + ' · ' + (String(t.person || '').trim() || '未填');
+        }, '這個月這一類沒有明細')
+      + '</div>';
+    return '<div class="bl-group">' + row + detail + '</div>';
   }).join('') + '</div>';
 }
 
@@ -984,14 +1019,9 @@ function personTable(rows, txByPerson){
     if(canExpand){
       var list = txByPerson[r.name] || [];
       detail = '<tr class="pt-detail" id="pd-' + idx + '" hidden><td colspan="' + cols + '">'
-        + (list.length
-          ? '<div class="pt-list">' + list.map(function(t){
-              return '<div class="pt-item"><span class="pt-date">' + esc(fmtDay(t.date)) + '</span>'
-                + '<span class="pt-name">' + esc(t.item) + '</span>'
-                + '<span class="pt-meta">' + esc(t.category) + ' · ' + esc(t.payment || '未指定') + '</span>'
-                + '<span class="pt-amt">NT$ ' + nf0(t.amount) + '</span></div>';
-            }).join('') + '</div>'
-          : '<div class="empty" style="padding:8px 0">這個月沒有這位的明細</div>')
+        + txList(list, function(t){
+            return t.category + ' · ' + (t.payment || '未指定');
+          }, '這個月沒有這位的明細')
         + '</td></tr>';
     }
     return '<tr class="pt-row' + (canExpand ? ' pt-clickable' : '') + '" data-idx="' + idx + '">'
@@ -1011,12 +1041,7 @@ function personTable(rows, txByPerson){
 
 /** 依經手人分組逐筆支出，'' 統一併入「未填」，跟後端聚合口徑一致 */
 function groupByPerson(rows){
-  var out = {};
-  (rows || []).forEach(function(t){
-    var name = String(t.person || '').trim() || '未填';
-    (out[name] = out[name] || []).push(t);
-  });
-  return out;
+  return groupBy(rows, function(t){ return String(t.person || '').trim() || '未填'; });
 }
 
 /* ---------- 經手人月度明細：月份選擇與快取 ---------- */
@@ -1064,11 +1089,14 @@ function renderBreakdown(){
     el('catBox').innerHTML = '<div class="loading">載入中…</div>';
     el('payBox').innerHTML = '<div class="loading">載入中…</div>';
     el('personBox').innerHTML = '<div class="loading">載入中…</div>';
-    el('personHint').textContent = '';
+    el('personHint').textContent = ''; el('catHint').textContent = '';
     loadMonth(ym).then(function(d){
       if(seq !== monthReqSeq) return;   // 使用者已經切到別的月份，這筆回應過期了
       el('scopeSub').textContent = ymLabel(ym) + '共 ' + nf(d.count) + ' 筆 · NT$ ' + nf0(d.total);
-      el('catBox').innerHTML = barList(d.cat);
+      el('catHint').textContent = d.count ? '（點一列看逐筆明細）' : '';
+      el('catBox').innerHTML = barList(d.cat, groupBy(d.rows, function(t){
+        return t.category || '未分類';
+      }));
       el('payBox').innerHTML = barList(d.pay);
       el('personHint').textContent = d.count ? '（點一列看逐筆明細）' : '';
       el('personBox').innerHTML = personTable(d.person, groupByPerson(d.rows));
@@ -1083,7 +1111,7 @@ function renderBreakdown(){
   var s = DATA.scopes[STATE.scope];
   var name = { year: '今年', all: '全部期間' }[STATE.scope];
   el('scopeSub').textContent = name + '共 ' + nf(s.count) + ' 筆 · NT$ ' + nf0(s.total);
-  el('personHint').textContent = '';
+  el('personHint').textContent = ''; el('catHint').textContent = '';
   el('catBox').innerHTML = barList(s.cat);
   el('payBox').innerHTML = barList(s.pay);
   el('personBox').innerHTML = personTable(s.person);
@@ -1101,6 +1129,16 @@ el('personBox').addEventListener('click', function(e){
   if(!detail) return;
   detail.hidden = !detail.hidden;
   row.classList.toggle('open', !detail.hidden);
+});
+
+el('catBox').addEventListener('click', function(e){
+  var row = e.target.closest ? e.target.closest('.bl-clickable') : null;
+  if(!row) return;
+  var detail = document.getElementById('cd-' + row.getAttribute('data-idx'));
+  if(!detail) return;
+  detail.hidden = !detail.hidden;
+  row.classList.toggle('open', !detail.hidden);
+  hideTip();   // 展開時 tooltip 還黏在原地會擋住內容
 });
 
 /* ---------- 紀錄明細（可編輯／刪除） ---------- */
