@@ -593,6 +593,13 @@ const INDEX_HTML = String.raw`<!DOCTYPE html>
   .pt-name{color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .pt-meta{color:var(--muted);font-size:11px;white-space:nowrap}
   .pt-amt{text-align:right;font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}
+  /* 依日期分組：日期那一行是小計，底下縮排列出當天每一筆 */
+  .dg-head{display:grid;grid-template-columns:1fr auto auto;gap:10px;align-items:center;
+    background:var(--raise);padding:7px 10px;font-size:12px}
+  .dg-date{color:var(--ink);font-weight:700;font-variant-numeric:tabular-nums}
+  .dg-cnt{color:var(--muted);font-size:11px}
+  .dg-sum{color:var(--ink-2);font-weight:700;font-variant-numeric:tabular-nums;text-align:right}
+  .dg-row{grid-template-columns:1fr auto auto;padding-left:22px}
 
   /* ---- 柱狀圖 ---- */
   .chart{padding-left:48px;padding-top:14px;position:relative}
@@ -707,6 +714,8 @@ const INDEX_HTML = String.raw`<!DOCTYPE html>
     .pt-name{grid-area:name;white-space:normal}
     .pt-amt{grid-area:amt}
     .pt-meta{grid-area:meta}
+    /* 日期分組的逐筆列沒有日期欄，品名與金額一行、支付／經手人收到第二行 */
+    .dg-row{grid-template-columns:1fr auto;grid-template-areas:"name amt" "meta meta";padding-left:18px}
   }
   @media(prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
@@ -881,6 +890,12 @@ window.addEventListener('scroll', hideTip, {passive:true});
 
 /* ---------- 格式 ---------- */
 function fmtDay(k){ var p=k.split('-'); return Number(p[1])+'/'+Number(p[2]); }
+var WEEKDAYS = ['日','一','二','三','四','五','六'];
+/** 「9/16（三）」：明細按日期分組時，標上星期比較好對帳 */
+function fmtDayWd(k){
+  var d = new Date(k + 'T00:00:00Z');
+  return fmtDay(k) + '（' + WEEKDAYS[d.getUTCDay()] + '）';
+}
 function fmtDayFull(k){ var p=k.split('-'); return p[0]+'/'+p[1]+'/'+p[2]; }
 function fmtMonth(k){ var p=k.split('-'); return Number(p[1])+'月'; }
 function fmtMonthFull(k){ var p=k.split('-'); return p[0]+' 年 '+Number(p[1])+' 月'; }
@@ -981,6 +996,25 @@ function groupBy(rows, keyFn){
   return out;
 }
 
+/** 依日期分組的明細：每個日期一行小計，底下列出那天的每一筆 */
+function txListByDate(list, metaFn, emptyText){
+  if(!list || !list.length) return '<div class="empty" style="padding:8px 0">' + esc(emptyText) + '</div>';
+  var byDate = groupBy(list, function(t){ return t.date; });
+  var dates = Object.keys(byDate).sort().reverse();
+  return '<div class="pt-list">' + dates.map(function(d){
+    var items = byDate[d];
+    var sum = items.reduce(function(a, b){ return a + (Number(b.amount) || 0); }, 0);
+    return '<div class="dg-head"><span class="dg-date">' + esc(fmtDayWd(d)) + '</span>'
+      + '<span class="dg-cnt">' + items.length + ' 筆</span>'
+      + '<span class="dg-sum">NT$ ' + nf0(sum) + '</span></div>'
+      + items.map(function(t){
+          return '<div class="pt-item dg-row"><span class="pt-name">' + esc(t.item) + '</span>'
+            + '<span class="pt-meta">' + esc(metaFn(t)) + '</span>'
+            + '<span class="pt-amt">NT$ ' + nf0(t.amount) + '</span></div>';
+        }).join('');
+  }).join('') + '</div>';
+}
+
 /** txByCat 有值時（月度明細模式）每一列可以點開看逐筆支出 */
 function barList(rows, txByCat){
   if(!rows || !rows.length) return '<div class="empty">這段期間還沒有紀錄</div>';
@@ -997,7 +1031,7 @@ function barList(rows, txByCat){
       + '<div class="bl-pct">' + r.pct.toFixed(0) + '%</div></div>';
     if(!canExpand) return row;
     var detail = '<div class="bl-detail" id="cd-' + idx + '" hidden>'
-      + txList(txByCat[r.name], function(t){
+      + txListByDate(txByCat[r.name], function(t){
           return (t.payment || '未指定') + ' · ' + (String(t.person || '').trim() || '未填');
         }, '這個月這一類沒有明細')
       + '</div>';
